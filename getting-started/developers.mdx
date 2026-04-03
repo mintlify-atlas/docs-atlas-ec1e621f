@@ -1,0 +1,122 @@
+---
+title: "Developer Setup"
+description: "Set up a tModLoader development environment, locate the Mod Sources folder, and explore ExampleMod as a reference."
+---
+
+tModLoader mods are C# class libraries built against the TML API. This page walks you through installing the required tools, finding where mod source files live, and opening ExampleMod — the canonical reference for every content type TML supports.
+
+## Prerequisites
+
+You need two things before writing a single line of mod code:
+
+<CardGroup cols={2}>
+  <Card title=".NET SDK" icon="code" href="https://dotnet.microsoft.com/download">
+    TML targets **.NET 6**. Install the .NET 6 SDK (or later) from Microsoft. Confirm it is installed by running `dotnet --version` in a terminal.
+  </Card>
+  <Card title="An IDE" icon="laptop-code">
+    **Visual Studio 2022** (Windows) and **JetBrains Rider** (cross-platform) both offer excellent C# support with IntelliSense, debugger integration, and NuGet management. VS Code with the C# extension also works.
+  </Card>
+</CardGroup>
+
+<Note>
+  The .NET SDK is separate from the .NET runtime that ships with TML. You need the SDK — not just the runtime — to compile mods.
+</Note>
+
+## Setting up your environment
+
+<Steps>
+  <Step title="Install the .NET 6 SDK">
+    Download and install the [.NET 6 SDK](https://dotnet.microsoft.com/download/dotnet/6.0) for your operating system. After installation, open a terminal and verify:
+
+    ```bash
+    dotnet --version
+    # Should output 6.x.x or higher
+    ```
+  </Step>
+  <Step title="Install tModLoader on Steam">
+    Install TML as a free Steam DLC from the [tModLoader store page](https://store.steampowered.com/app/1281930/tModLoader/). Launch it once so it finishes first-run setup and creates the required save folders.
+  </Step>
+  <Step title="Locate the Mod Sources folder">
+    TML looks for mod source code in a folder called **ModSources**, which lives inside the Terraria saves directory. The exact path depends on your operating system:
+
+    <Tabs>
+      <Tab title="Windows">
+        ```
+        %USERPROFILE%\Documents\My Games\Terraria\tModLoader\ModSources\
+        ```
+      </Tab>
+      <Tab title="macOS">
+        ```
+        ~/Library/Application Support/Terraria/tModLoader/ModSources/
+        ```
+      </Tab>
+      <Tab title="Linux">
+        ```
+        ~/.local/share/Terraria/tModLoader/ModSources/
+        ```
+      </Tab>
+    </Tabs>
+
+    You can also find the folder from inside TML: go to **Workshop** → **Develop Mods** → **Open Mod Sources Folder**.
+  </Step>
+  <Step title="Place ExampleMod in Mod Sources">
+    ExampleMod is the official reference mod maintained by the TML team. Copy or symlink the ExampleMod folder into your ModSources directory so you can browse and build it locally.
+
+    The source is at:
+    ```
+    ExampleMod/
+    ├── Content/          # Items, NPCs, tiles, projectiles, buffs…
+    ├── Common/           # Shared utilities and base classes
+    ├── Assets/           # Textures, sounds, and other assets
+    ├── Localization/     # Translation files (.hjson)
+    ├── ExampleMod.cs     # Mod entry point
+    └── ExampleMod.csproj # Project file
+    ```
+
+    Once it is in ModSources, you can build it in-game from **Workshop** → **Develop Mods** and see it running live.
+  </Step>
+  <Step title="Open the project in your IDE">
+    Open `ExampleMod.sln` (or `ExampleMod.csproj`) in Visual Studio, Rider, or VS Code. NuGet will restore the TML API package automatically on first load.
+
+    ```bash
+    # Or build from the command line
+    dotnet build ExampleMod/ExampleMod.csproj
+    ```
+  </Step>
+</Steps>
+
+## Using ExampleMod as a reference
+
+ExampleMod is designed to be read alongside the wiki and these docs. Every content type that TML supports has at least one example implementation inside it.
+
+<CardGroup cols={2}>
+  <Card title="Items and weapons" icon="sword" href="https://github.com/tModLoader/tModLoader/tree/stable/ExampleMod/Content/Items">
+    See `ExampleGun.cs` for a complete ranged weapon, including projectile spawning and ammo consumption.
+  </Card>
+  <Card title="NPCs and bosses" icon="dragon" href="https://github.com/tModLoader/tModLoader/tree/stable/ExampleMod/Content/NPCs">
+    Multi-phase bosses, town NPCs, and critter examples with full AI implementations.
+  </Card>
+  <Card title="Tiles and walls" icon="table-cells" href="https://github.com/tModLoader/tModLoader/tree/stable/ExampleMod/Content/Tiles">
+    Animated tiles, crafting stations, multi-tiles, and interactive furniture.
+  </Card>
+  <Card title="Mod entry point" icon="plug" href="https://github.com/tModLoader/tModLoader/tree/stable/ExampleMod/ExampleMod.cs">
+    `ExampleMod.cs` shows how to use `Mod.Load`, `Mod.Unload`, and hook into game systems at the top level.
+  </Card>
+</CardGroup>
+
+<Tip>
+  Search within ExampleMod on GitHub to quickly find examples relevant to what you want to build. The repository search supports filtering by path, so you can scope results to `ExampleMod/` only.
+</Tip>
+
+## Next steps
+
+With your environment ready and ExampleMod open for reference, you are set to write your first mod.
+
+<CardGroup cols={2}>
+  <Card title="Your first mod" icon="rocket" href="/guides/first-mod">
+    Follow the step-by-step guide to create a working mod from scratch.
+  </Card>
+  <Card title="Mod structure" icon="folder-open" href="/guides/mod-structure">
+    Understand how TML discovers, loads, and manages mod files.
+  </Card>
+</CardGroup>

@@ -1,0 +1,299 @@
+---
+title: "Networking & Multiplayer"
+description: "Syncing mod state across multiplayer sessions using ModPacket, ModPlayer sync hooks, and item net methods."
+---
+
+Terraria is a client-server game. In multiplayer, the server is authoritative and each client renders a local copy of the world. Your mod must explicitly communicate any state changes across the network — otherwise, what happens on one machine stays invisible to everyone else.
+
+<Note>
+  Most simple mods don't need custom packets. Many tModLoader hooks — such as `ModBuff.Update`, `ModProjectile`, and `GlobalNPC` callbacks — are already called on both server and clients. Write networking code only when a hook you need doesn't automatically sync.
+</Note>
+
+## Core concepts
+
+| Mode | Constant | Description |
+|---|---|---|
+| Single player | `NetmodeID.SinglePlayer` | No network; all code runs locally |
+| Multiplayer client | `NetmodeID.MultiplayerClient` | Connected player running the game |
+| Server | `NetmodeID.Server` | Dedicated or listen server; no local player |
+
+Check `Main.netMode` when your code should only run in specific contexts.
+
+## `ModPacket`
+
+`ModPacket` is a `BinaryWriter`-based wrapper for sending arbitrary data over the network. You create one from your `Mod` instance, write data into it, then call `Send`.
+
+### Sending a packet
+
+```csharp
+ModPacket packet = Mod.GetPacket();
+packet.Write((byte)MyMessageType.SomethingHappened); // Packet type identifier
+packet.Write(player.whoAmI);
+packet.Write(someValue);
+
+// From a client: sends to the server (toClient and ignoreClient are ignored)
+packet.Send();
+
+// From the server: sends to one specific client
+packet.Send(toClient: whoAmI);
+
+// From the server: sends to all clients except one
+packet.Send(ignoreClient: whoAmI);
+```
+
+<Warning>
+  Never include sensitive or security-relevant data in packets. Packets travel over the network unencrypted and can be intercepted or spoofed by any client.
+</Warning>
+
+### Receiving a packet
+
+Override `HandlePacket` in your `Mod` class:
+
+```csharp
+public override void HandlePacket(BinaryReader reader, int whoAmI)
+{
+    MyMessageType msgType = (MyMessageType)reader.ReadByte();
+
+    switch (msgType)
+    {
+        case MyMessageType.SomethingHappened:
+            int playerIndex = reader.ReadByte();
+            float someValue = reader.ReadSingle();
+
+            // If on the server, forward to all other clients
+            if (Main.netMode == NetmodeID.Server)
+            {
+                ModPacket packet = GetPacket();
+                packet.Write((byte)MyMessageType.SomethingHappened);
+                packet.Write((byte)playerIndex);
+                packet.Write(someValue);
+                packet.Send(ignoreClient: whoAmI);
+            }
+            break;
+
+        default:
+            Logger.WarnFormat("Unknown message type: {0}", msgType);
+            break;
+    }
+}
+```
+
+### Packet ID pattern
+
+Use an `enum` to give each message a readable name and avoid magic numbers. Place it inside your `Mod` partial class:
+
+```csharp
+internal enum MessageType : byte
+{
+    PlayerStatSync,
+    TeleportToStatue,
+    DodgeEffect,
+}
+```
+
+Read the type as the first byte in every packet and dispatch with a `switch`.
+
+## Client → server → clients broadcast pattern
+
+The most common pattern:
+
+1. A **client** detects a local change and sends a packet to the **server**.
+2. The **server** applies the change and forwards it to **all other clients** (using `ignoreClient: whoAmI`).
+3. Each **client** reads the packet and updates its local state.
+
+This pattern ensures the server stays authoritative and all clients converge on the same state.
+
+```csharp
+// Step 1 — client sends to server
+if (Main.netMode == NetmodeID.MultiplayerClient)
+{
+    ModPacket packet = Mod.GetPacket();
+    packet.Write((byte)MessageType.PlayerStatSync);
+    packet.Write((byte)player.whoAmI);
+    packet.Write(newStatValue);
+    packet.Send(); // Destination: server
+}
+
+// Step 2 & 3 — server applies, then relays to all other clients
+// (handled in HandlePacket — see above)
+```
+
+## Syncing player state with `ModPlayer`
+
+For player-specific data, `ModPlayer` provides three hooks that work together to keep clients in sync automatically each tick.
+
+### `CopyClientState(ModPlayer targetCopy)`
+
+Called on the local client every tick to snapshot the current state into a shadow copy. tModLoader uses this copy to detect what changed since the last tick.
+
+### `SendClientChanges(ModPlayer clientPlayer)`
+
+Called when tModLoader detects the local state differs from the snapshot. Send only the data that changed:
+
+```csharp
+public override void SendClientChanges(ModPlayer clientPlayer)
+{
+    ExampleStatIncreasePlayer clone = (ExampleStatIncreasePlayer)clientPlayer;
+
+    if (exampleLifeFruits != clone.exampleLifeFruits || exampleManaCrystals != clone.exampleManaCrystals)
+    {
+        // Re-use SyncPlayer to send all data when any value changes.
+        // For large amounts of data, send only the changed fields instead.
+        SyncPlayer(toWho: -1, fromWho: Main.myPlayer, newPlayer: false);
+    }
+}
+```
+
+### `SyncPlayer(int toWho, int fromWho, bool newPlayer)`
+
+Called when a player joins the session (`newPlayer: true`) or when `SendClientChanges` triggers a sync. Send the full state of this `ModPlayer` here:
+
+```csharp
+public override void SyncPlayer(int toWho, int fromWho, bool newPlayer)
+{
+    ModPacket packet = Mod.GetPacket();
+    packet.Write((byte)ExampleMod.MessageType.ExampleStatIncreasePlayerSync);
+    packet.Write((byte)Player.whoAmI);
+    packet.Write((byte)exampleLifeFruits);
+    packet.Write((byte)exampleManaCrystals);
+    packet.Send(toWho, fromWho);
+}
+```
+
+## Syncing items with `NetSend` / `NetReceive`
+
+`ModItem` (and `GlobalItem`) expose two hooks for syncing item-specific data over the network. These are called automatically by tModLoader in the appropriate contexts.
+
+```csharp
+public class MyModItem : ModItem
+{
+    public int chargeLevel;
+
+    public override void NetSend(BinaryWriter writer)
+    {
+        writer.Write(chargeLevel);
+    }
+
+    public override void NetReceive(BinaryReader reader)
+    {
+        chargeLevel = reader.ReadInt32();
+    }
+}
+```
+
+## Complete example from ExampleMod
+
+The following is `ExampleMod.Networking.cs` — a partial class of `ExampleMod` that handles all incoming packets. Each message type dispatches to a helper method in the relevant class:
+
+```csharp
+using System.IO;
+using Terraria;
+using Terraria.ID;
+using Terraria.ModLoader;
+
+namespace ExampleMod
+{
+    partial class ExampleMod
+    {
+        internal enum MessageType : byte
+        {
+            ExampleStatIncreasePlayerSync,
+            ExampleTeleportToStatue,
+            ExampleDodge,
+            ExampleTownPetUnlockOrExchange,
+            ExampleResourceEffect,
+            StartVictoryPose,
+            CancelVictoryPose,
+            SendCustomUseStylePlayerDirection,
+        }
+
+        public override void HandlePacket(BinaryReader reader, int whoAmI)
+        {
+            MessageType msgType = (MessageType)reader.ReadByte();
+
+            switch (msgType)
+            {
+                // Syncs ExampleStatIncreasePlayer.exampleLifeFruits and .exampleManaCrystals
+                case MessageType.ExampleStatIncreasePlayerSync:
+                    byte playerNumber = reader.ReadByte();
+                    ExampleStatIncreasePlayer examplePlayer = Main.player[playerNumber].GetModPlayer<ExampleStatIncreasePlayer>();
+                    examplePlayer.ReceivePlayerSync(reader);
+
+                    if (Main.netMode == NetmodeID.Server)
+                    {
+                        // Forward the changes to all other clients
+                        examplePlayer.SyncPlayer(-1, whoAmI, false);
+                    }
+                    break;
+
+                case MessageType.ExampleTeleportToStatue:
+                    if (Main.npc[reader.ReadByte()].ModNPC is ExamplePerson person && person.NPC.active)
+                        person.StatueTeleport();
+                    break;
+
+                case MessageType.ExampleDodge:
+                    ExampleDamageModificationPlayer.HandleExampleDodgeMessage(reader, whoAmI);
+                    break;
+
+                default:
+                    Logger.WarnFormat("ExampleMod: Unknown Message type: {0}", msgType);
+                    break;
+            }
+        }
+    }
+}
+```
+
+And the corresponding `ExampleStatIncreasePlayer` sync methods:
+
+```csharp
+public override void SyncPlayer(int toWho, int fromWho, bool newPlayer)
+{
+    ModPacket packet = Mod.GetPacket();
+    packet.Write((byte)ExampleMod.MessageType.ExampleStatIncreasePlayerSync);
+    packet.Write((byte)Player.whoAmI);
+    packet.Write((byte)exampleLifeFruits);
+    packet.Write((byte)exampleManaCrystals);
+    packet.Send(toWho, fromWho);
+}
+
+public void ReceivePlayerSync(BinaryReader reader)
+{
+    exampleLifeFruits = reader.ReadByte();
+    exampleManaCrystals = reader.ReadByte();
+}
+
+public override void CopyClientState(ModPlayer targetCopy)
+{
+    ExampleStatIncreasePlayer clone = (ExampleStatIncreasePlayer)targetCopy;
+    clone.exampleLifeFruits = exampleLifeFruits;
+    clone.exampleManaCrystals = exampleManaCrystals;
+}
+
+public override void SendClientChanges(ModPlayer clientPlayer)
+{
+    ExampleStatIncreasePlayer clone = (ExampleStatIncreasePlayer)clientPlayer;
+
+    if (exampleLifeFruits != clone.exampleLifeFruits || exampleManaCrystals != clone.exampleManaCrystals)
+    {
+        SyncPlayer(toWho: -1, fromWho: Main.myPlayer, newPlayer: false);
+    }
+}
+```
+
+## Summary
+
+<CardGroup cols={2}>
+  <Card title="ModPacket" icon="paper-plane">
+    Low-level packet API. Use `Mod.GetPacket()`, write data with `BinaryWriter` methods, send with `packet.Send()`.
+  </Card>
+  <Card title="HandlePacket" icon="inbox">
+    Override in your `Mod` class to receive and dispatch incoming packets. Always read fields in the same order they were written.
+  </Card>
+  <Card title="ModPlayer sync" icon="arrows-rotate">
+    `SyncPlayer`, `CopyClientState`, and `SendClientChanges` handle automatic per-tick player state sync. Prefer these over manual packets for player data.
+  </Card>
+  <Card title="NetSend / NetReceive" icon="code">
+    Pair of hooks on `ModItem` and `GlobalItem` for syncing item-specific fields automatically.
+  </Card>
+</CardGroup>

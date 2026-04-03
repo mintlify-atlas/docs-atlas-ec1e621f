@@ -1,0 +1,275 @@
+---
+title: "Mod Configuration"
+description: Adding user-configurable settings to your mod with automatic UI.
+---
+
+`ModConfig` lets you add settings to your mod that players can change through the in-game Mod Configuration screen. You define the fields and tModLoader generates the UI automatically, handles serialization to disk, and syncs server-side configs in multiplayer.
+
+## Defining a config class
+
+Subclass `ModConfig` and declare your settings as public fields or properties. The only required override is `Mode`, which determines the scope of the config.
+
+```csharp
+using System.ComponentModel;
+using Terraria.ModLoader.Config;
+
+namespace MyMod.Common.Configs
+{
+    public class MyModConfig : ModConfig
+    {
+        public override ConfigScope Mode => ConfigScope.ServerSide;
+
+        [Header("Gameplay")]
+        [DefaultValue(true)]
+        [ReloadRequired]
+        public bool EnableSpecialDrops;
+
+        [DefaultValue(1.0f)]
+        [Range(0.1f, 5.0f)]
+        public float EnemyHealthMultiplier;
+    }
+}
+```
+
+Like other `ModType` subclasses, `ModConfig` classes are discovered and registered automatically. You do not need to call any registration method.
+
+## ConfigScope
+
+Every config must declare a `ConfigScope`:
+
+```csharp
+// ConfigScope.cs
+public enum ConfigScope
+{
+    // Shared between all players; maintained by the server.
+    // Use for gameplay changes that affect everyone equally.
+    // Also covers single player.
+    ServerSide,
+
+    // Specific to the local client.
+    // Use for visual or audio preferences.
+    ClientSide,
+}
+```
+
+<Note>
+  In multiplayer, when a client joins a server, `ServerSide` configs are synced from the server to the client. The client's local copy is overwritten with the server's values. `ClientSide` configs are never synced — each player keeps their own values.
+</Note>
+
+## Accessing config values
+
+The simplest pattern is a static `Instance` field on your config class. tModLoader automatically assigns the active instance to a field named `Instance` before calling `OnLoaded()`:
+
+```csharp
+public class MyModConfig : ModConfig
+{
+    public override ConfigScope Mode => ConfigScope.ServerSide;
+
+    public static MyModConfig Instance;
+
+    [DefaultValue(true)]
+    [ReloadRequired]
+    public bool EnableSpecialDrops;
+}
+```
+
+Access the value from anywhere else in your mod:
+
+```csharp
+if (MyModConfig.Instance.EnableSpecialDrops)
+{
+    // spawn extra drops
+}
+```
+
+<Tip>
+  The `Instance` field is set before `OnLoaded()` runs and cleared when the mod unloads. You do not need to assign it yourself.
+</Tip>
+
+## A real example: ExampleMod's config
+
+`ExampleModConfig` from ExampleMod uses `ServerSide` scope, `[ReloadRequired]` on every field, and `[Header]` to group fields in the UI:
+
+```csharp
+// ExampleMod/Common/Configs/ExampleModConfig.cs
+public class ExampleModConfig : ModConfig
+{
+    public override ConfigScope Mode => ConfigScope.ServerSide;
+
+    [Header("Items")]
+    [DefaultValue(true)]
+    [ReloadRequired]
+    public bool ExampleWingsToggle;
+
+    [ReloadRequired]
+    public bool WeaponWithGrowingDamageToggle;
+
+    [Header("Other")]
+    [DefaultValue(true)]
+    [ReloadRequired]
+    public bool WingSlotLoadoutSupportToggle;
+}
+```
+
+The `[Header]` attribute inserts a section label in the UI. The corresponding label text is defined in your localization file under `Mods.{ModName}.Configs.{ConfigName}.Headers.{Identifier}`.
+
+## Lifecycle hooks
+
+### OnLoaded()
+
+```csharp
+public virtual void OnLoaded()
+```
+
+Called the first time the config is loaded, before `Mod.Load()` runs. tModLoader has already assigned `Instance` at this point. Use `OnLoaded()` to perform any one-time initialization that depends on config values.
+
+### OnChanged()
+
+```csharp
+public virtual void OnChanged()
+```
+
+Called every time config values become active — immediately after `OnLoaded()`, and again whenever the player saves changes in the UI (if no reload is required). Use this hook to apply config values to running game state.
+
+### NeedsReload()
+
+```csharp
+public virtual bool NeedsReload(ModConfig pendingConfig)
+```
+
+Returns `true` if the pending config values require a full mod reload to take effect. The default implementation checks for any field or property annotated with `[ReloadRequired]`. You can override this for more complex validation.
+
+<Warning>
+  Configs that trigger `NeedsReload` cannot be changed in-game. The player must return to the main menu and reload mods before the change takes effect. Only mark settings as `[ReloadRequired]` when it is genuinely unavoidable — for example, when a field controls whether a `ModItem` is loaded at all.
+</Warning>
+
+## Key attributes
+
+### `[DefaultValue]`
+
+Sets the initial value for a field. Use the overload appropriate for the field's type. For structs like `Color`, pass a string representation:
+
+```csharp
+[DefaultValue(100)]
+public int MaxEnemies;
+
+[DefaultValue(true)]
+public bool EnableFeature;
+
+[DefaultValue(typeof(Color), "255, 128, 0, 255")]
+public Color TintColor;
+```
+
+### `[ReloadRequired]`
+
+Marks a field so that changing it triggers a mod reload. The default `NeedsReload()` implementation detects this attribute automatically:
+
+```csharp
+[DefaultValue(true)]
+[ReloadRequired]
+public bool EnableNewItems;
+```
+
+### `[Range]`
+
+Constrains a numeric field to a min/max range, and causes the UI to render a slider. Defaults differ by type (`float`: 0–1, `int`: 0–100):
+
+```csharp
+[Range(0.5f, 3.0f)]
+[DefaultValue(1.0f)]
+public float DamageScale;
+
+[Range(1, 200)]
+[DefaultValue(50)]
+public int MaxSpawnRate;
+```
+
+### `[Header]`
+
+Inserts a section header above a field in the UI. The string is an identifier resolved through localization:
+
+```csharp
+[Header("Gameplay")]
+public bool EnableHardMode;
+
+[Header("Visual")]
+public bool ShowParticles;
+```
+
+### `[JsonIgnore]`
+
+Excludes a field from serialization and from the UI. Use this for computed properties or fields you manage manually:
+
+```csharp
+[JsonIgnore]
+public bool IsHardcoreMode => DifficultyLevel >= 3;
+```
+
+## Multiplayer behavior
+
+<Steps>
+  <Step title="Client joins server">
+    When a client connects, the server sends its `ServerSide` config values to the client. The client applies them immediately, overwriting any local values.
+  </Step>
+  <Step title="Client changes ServerSide config in-game">
+    The client sends a change request to the server. The server runs `AcceptClientChanges()` to decide whether to accept. If accepted, the new values are broadcast to all clients.
+  </Step>
+  <Step title="Client keeps ClientSide config">
+    `ClientSide` configs are never sent or received over the network. Each player's values are their own.
+  </Step>
+</Steps>
+
+You can override `AcceptClientChanges()` on a `ServerSide` config to enforce permissions:
+
+```csharp
+public override bool AcceptClientChanges(ModConfig pendingConfig, int whoAmI, ref NetworkText message)
+{
+    // Only allow operators to change this config
+    if (!Netplay.Clients[whoAmI].IsOperator)
+    {
+        message = NetworkText.FromLiteral("Only server operators can change this setting.");
+        return false;
+    }
+    return true;
+}
+```
+
+## Localization for configs
+
+Field labels and tooltips are resolved from your localization files. The auto-generated keys follow this pattern:
+
+```text
+Mods.{ModName}.Configs.{ConfigName}.{FieldName}.Label
+Mods.{ModName}.Configs.{ConfigName}.{FieldName}.Tooltip
+Mods.{ModName}.Configs.{ConfigName}.Headers.{HeaderIdentifier}
+```
+
+In your `en-US.hjson`:
+
+```text
+Mods: {
+    MyMod: {
+        Configs: {
+            MyModConfig: {
+                DisplayName: My Mod Config
+
+                EnableSpecialDrops: {
+                    Label: Enable Special Drops
+                    Tooltip: When enabled, enemies drop additional loot.
+                }
+
+                EnemyHealthMultiplier: {
+                    Label: Enemy Health Multiplier
+                    Tooltip: Scales the maximum health of all enemies. Requires reload.
+                }
+
+                Headers: {
+                    Gameplay: Gameplay Settings
+                }
+            }
+        }
+    }
+}
+```
+
+Build and reload your mod once after adding a new config class — tModLoader will generate stub entries in your localization files for any keys that are missing.

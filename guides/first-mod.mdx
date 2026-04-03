@@ -1,0 +1,137 @@
+---
+title: "Your first mod"
+description: "Step-by-step guide to creating your first tModLoader mod, from an empty folder to a working mod you can enable in-game."
+---
+
+This guide walks you through creating a minimal tModLoader mod from scratch. By the end you will have a working `.tmod` file that loads in-game.
+
+## Prerequisites
+
+- tModLoader installed via Steam
+- A C# IDE such as Visual Studio 2022 or Rider
+- Basic familiarity with C#
+
+---
+
+<Steps>
+  <Step title="Create a folder in Mod Sources">
+    tModLoader looks for mods in a specific directory called **Mod Sources**. Open the Mods menu in-game and click **Open Mod Sources** to reveal its location, or navigate to it directly:
+
+    | OS | Path |
+    |----|------|
+    | Windows | `%USERPROFILE%\Documents\My Games\Terraria\tModLoader\ModSources\` |
+    | macOS | `~/Library/Application Support/Terraria/tModLoader/ModSources/` |
+    | Linux | `~/.local/share/Terraria/tModLoader/ModSources/` |
+
+    Create a new folder inside `ModSources/` whose name matches the internal name you want for your mod. This folder name becomes the mod's identifier.
+
+    ```bash
+    # Example
+    mkdir MyMod
+    ```
+
+    <Note>
+      The folder name must be a valid C# identifier — no spaces or special characters. Use `PascalCase` by convention (e.g. `MyMod`, `CoolWeapons`).
+    </Note>
+  </Step>
+
+  <Step title="Create the .csproj file">
+    Inside `MyMod/`, create a file named `MyMod.csproj`. This tells the .NET SDK how to build your mod and links it to tModLoader's targets file, which wires up references and the build pipeline automatically.
+
+    ```xml MyMod.csproj
+    <Project Sdk="Microsoft.NET.Sdk">
+      <Import Project="..\tModLoader.targets" />
+      <PropertyGroup>
+        <AssemblyName>MyMod</AssemblyName>
+        <LangVersion>latest</LangVersion>
+      </PropertyGroup>
+    </Project>
+    ```
+
+    The `<Import>` line pulls in a `.targets` file that tModLoader places in the `ModSources/` parent directory. It adds the Terraria and tModLoader assemblies as references so your code can compile against them without any manual setup.
+  </Step>
+
+  <Step title="Create your main Mod class">
+    Create a file named `MyMod.cs`. Your main class must inherit from `Terraria.ModLoader.Mod`. tModLoader discovers it automatically — you do not need to register it anywhere.
+
+    ```csharp MyMod.cs
+    using Terraria.ModLoader;
+
+    namespace MyMod
+    {
+        public class MyMod : Mod
+        {
+            public override void Load()
+            {
+                // Called once when the mod is loaded.
+                // Use this to subscribe to events or load assets.
+            }
+
+            public override void Unload()
+            {
+                // Called when the mod is unloaded or the game exits.
+                // Clean up any static state or event subscriptions here.
+            }
+        }
+    }
+    ```
+
+    `Load()` and `Unload()` are optional overrides. For a minimal mod you can leave the class body empty — tModLoader only requires the class to exist and inherit from `Mod`.
+
+    <Note>
+      The namespace and class name do not have to match the folder name, but keeping them consistent avoids confusion. The mod's internal name is always derived from the folder name, not the class name.
+    </Note>
+  </Step>
+
+  <Step title="Create build.txt">
+    `build.txt` is a plain-text metadata file that tModLoader reads before compiling your mod. Create it in the root of your `MyMod/` folder.
+
+    ```text build.txt
+    author = YourName
+    displayName = My Mod
+    version = 0.1
+    ```
+
+    **Common fields:**
+
+    | Field | Description |
+    |-------|-------------|
+    | `author` | Your name or team name, shown in the Mods menu |
+    | `displayName` | Human-readable mod name shown in-game |
+    | `version` | Mod version, shown in the Mods menu |
+    | `homepage` | URL to your mod's homepage or forum thread |
+    | `modReferences` | Comma-separated list of mod internal names this mod depends on |
+    | `buildIgnore` | Glob patterns for files to exclude from the built `.tmod` (e.g. `*.csproj, obj\*, bin\*`) |
+
+    The `version` field must follow the `major.minor[.patch[.revision]]` format.
+  </Step>
+
+  <Step title="Build and enable the mod in-game">
+    Launch tModLoader, open the **Workshop** menu, and select **Develop Mods**. Your mod should appear in the list. Click **Build** to compile it, then click **Build + Reload** to compile and immediately enable it in a new game session.
+
+    Once loaded, your mod's display name will appear in the **Mods** list with a green enabled indicator.
+
+    <Note>
+      If the build fails, open the log file at `%USERPROFILE%\Documents\My Games\Terraria\tModLoader\Logs\client.log` (Windows) or the equivalent path on your OS. The compiler error will be printed there with a file name and line number.
+    </Note>
+  </Step>
+</Steps>
+
+---
+
+## What's next
+
+Your mod is now set up and loading. From here you can start adding content:
+
+<CardGroup cols={2}>
+  <Card title="Mod structure" icon="folder-tree" href="/guides/mod-structure">
+    Learn the recommended folder layout and naming conventions.
+  </Card>
+  <Card title="Building and testing" icon="hammer" href="/guides/building-and-testing">
+    Speed up your workflow with hot reload and logging tools.
+  </Card>
+</CardGroup>
+
+<Tip>
+  ExampleMod is the official reference mod maintained by the tModLoader team. It demonstrates nearly every API feature with working code. Browse its source at `ModSources/tModLoader/ExampleMod/` or on [GitHub](https://github.com/tModLoader/tModLoader/tree/1.4.4/ExampleMod).
+</Tip>

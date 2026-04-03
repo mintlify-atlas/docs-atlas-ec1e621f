@@ -1,0 +1,78 @@
+---
+title: "Playing Mods"
+description: "How to install tModLoader, find mods on Steam Workshop, manage mod packs, and play with friends."
+---
+
+tModLoader (TML) is a free Steam DLC that sits alongside Terraria and adds a full mod management layer. Once installed, you can browse thousands of community mods, enable them in seconds, and jump straight into a modded playthrough.
+
+## Before you start
+
+- A valid copy of **Terraria** on Steam is required. TML is distributed as a free DLC and will not run without it.
+- TML manages its own save files separately from vanilla Terraria, so your existing characters and worlds are not affected.
+
+## Installing and launching tModLoader
+
+<Steps>
+  <Step title="Install tModLoader on Steam">
+    Open Steam and go to the [tModLoader store page](https://store.steampowered.com/app/1281930/tModLoader/). Click **Play Game** or **Install** — Steam will add it to your library as a free DLC for Terraria.
+  </Step>
+  <Step title="Launch tModLoader">
+    In your Steam library, find **tModLoader** and click **Play**. It opens its own launcher and loads independently from vanilla Terraria.
+  </Step>
+  <Step title="Open the Workshop browser">
+    From the TML main menu, click **Workshop** → **Download Mods**. This opens the in-game Steam Workshop browser where you can search, filter, and subscribe to mods.
+  </Step>
+  <Step title="Enable your mods">
+    After subscribing to mods, go back to the main menu and click **Mods**. Toggle each mod on, then click **Reload Mods**. TML will check for compatibility and load everything.
+  </Step>
+  <Step title="Play">
+    Create a new character and world, or load an existing modded save. Your enabled mods are now active.
+  </Step>
+</Steps>
+
+<Tip>
+  Some mods are best paired together (for example, a content mod and its library dependency). Check each mod's Workshop description for recommended companions and load-order notes.
+</Tip>
+
+## Finding mods on Steam Workshop
+
+The Workshop browser inside TML is the primary place to discover mods. You can also visit the [Steam Workshop page](https://steamcommunity.com/app/1281930/workshop/) in your browser to browse, read changelogs, and subscribe without launching the game.
+
+Mods you subscribe to on the web will download automatically when you next launch TML.
+
+## Managing mod packs
+
+A **mod pack** is a saved list of enabled mods. Mod packs let you switch between different sets of mods without toggling them one by one — useful when you play multiple modpacks or want to share a configuration with friends.
+
+To create a mod pack:
+
+1. Enable the mods you want.
+2. In the **Mods** menu, click **Save Enabled as New Mod Pack**.
+3. Give the pack a name and save it.
+
+To load a mod pack:
+
+1. Open the **Mods** menu.
+2. Click **Mod Packs** and select the pack you want.
+3. Click **Load** — TML enables the saved mods and disables all others, then reloads.
+
+<Note>
+  Mod packs save the list of mod names, not the mod files themselves. Each player still needs to have the same mods installed (subscribed on Workshop) for the pack to load fully.
+</Note>
+
+## Playing multiplayer
+
+Multiplayer in tModLoader requires **every player in the session to have TML installed** and to have the **same mods enabled**. Vanilla Terraria clients cannot join a TML server, and TML clients cannot join a vanilla server.
+
+<Warning>
+  If any player is missing a mod that the server has loaded, they will be unable to connect. Make sure everyone subscribes to and enables the same mods before starting a session.
+</Warning>
+
+To host a multiplayer session:
+
+- **Host via Steam**: From the main menu, choose **Multiplayer** → **Host & Play**. Steam handles the connection; friends can join through your Steam profile.
+- **Dedicated server**: Run `TerrariaServer.exe` (or the Linux/macOS equivalent) from the TML installation directory. Dedicated servers can be configured headlessly with a `serverconfig.txt` file.
+
+<Tip>
+  Share a mod pack with your friends before a session so everyone can enable the exact same set of mods with one click.
+</Tip>

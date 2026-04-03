@@ -1,0 +1,349 @@
+---
+title: "ModProjectile"
+description: Creating custom projectiles for weapons and abilities
+---
+
+`ModProjectile` is the base class for every custom projectile in your mod. Create a class that inherits from `ModProjectile` and tModLoader registers it automatically.
+
+```csharp
+using Terraria;
+using Terraria.ID;
+using Terraria.ModLoader;
+
+public class MyProjectile : ModProjectile
+{
+    public override void SetDefaults()
+    {
+        // ...
+    }
+}
+```
+
+Projectiles are spawned using `Projectile.NewProjectile(...)`. You reference your type with `ModContent.ProjectileType<MyProjectile>()`.
+
+---
+
+## AIType
+
+Set this property in `SetDefaults` to copy the complete AI behavior of a vanilla projectile. This is the fastest way to produce a projectile that behaves like an existing one.
+
+```csharp
+public override void SetDefaults()
+{
+    // ... other properties ...
+    AIType = ProjectileID.Bullet; // behave exactly like a vanilla bullet
+}
+```
+
+<Tip>
+`AIType` copies the full AI logic, including movement, tile interaction, and rotation. You can then override individual hooks (like `OnHitNPC`) to add custom behavior on top.
+</Tip>
+
+---
+
+## SetStaticDefaults
+
+Called once during mod loading. Use this to configure ID sets such as trail caching:
+
+```csharp
+public override void SetStaticDefaults()
+{
+    ProjectileID.Sets.TrailCacheLength[Type] = 5;
+    ProjectileID.Sets.TrailingMode[Type] = 0;
+}
+```
+
+---
+
+## SetDefaults
+
+Configure the projectile's core properties.
+
+```csharp
+public override void SetDefaults()
+{
+    Projectile.width = 8;
+    Projectile.height = 8;
+    Projectile.aiStyle = ProjAIStyleID.Arrow; // vanilla AI style
+    Projectile.friendly = true;       // damages enemies
+    Projectile.hostile = false;       // does not damage the player
+    Projectile.DamageType = DamageClass.Ranged;
+    Projectile.penetrate = 5;         // hits before disappearing (-1 = infinite)
+    Projectile.timeLeft = 600;        // lifetime in ticks (600 = 10 sec)
+    Projectile.alpha = 255;           // 255 = fully transparent on spawn
+    Projectile.light = 0.5f;          // light emitted
+    Projectile.ignoreWater = true;
+    Projectile.tileCollide = true;
+    Projectile.extraUpdates = 1;      // extra AI updates per tick (for fast projectiles)
+
+    AIType = ProjectileID.Bullet;
+}
+```
+
+<AccordionGroup>
+  <Accordion title="Common SetDefaults properties">
+
+| Property | Type | Description |
+|---|---|---|
+| `Projectile.width` / `height` | `int` | Hitbox size |
+| `Projectile.aiStyle` | `int` | Vanilla AI style. See `ProjAIStyleID` |
+| `Projectile.friendly` | `bool` | Can hit enemies |
+| `Projectile.hostile` | `bool` | Can hit players |
+| `Projectile.DamageType` | `DamageClass` | `Melee`, `Ranged`, `Magic`, `Summon` |
+| `Projectile.penetrate` | `int` | Hits before dying. `-1` = infinite |
+| `Projectile.timeLeft` | `int` | Lifetime in ticks |
+| `Projectile.tileCollide` | `bool` | Whether tiles stop the projectile |
+| `Projectile.ignoreWater` | `bool` | Unaffected by water physics |
+| `Projectile.light` | `float` | Light emitted (0–1) |
+| `Projectile.alpha` | `int` | Transparency (0 = opaque, 255 = invisible) |
+| `Projectile.extraUpdates` | `int` | Extra AI calls per tick (for fast projectiles) |
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Key hooks
+
+### AI
+
+Custom movement and behavior. Called every tick on the local client, server, and remote clients.
+
+```csharp
+public override void AI()
+{
+    // Rotate to match velocity direction
+    Projectile.rotation = Projectile.velocity.ToRotation();
+
+    // Gravity
+    Projectile.velocity.Y += 0.3f;
+
+    // Aim at nearest NPC (homing)
+    NPC target = Main.npc
+        .Where(n => n.active && !n.friendly && n.CanBeChasedBy())
+        .OrderBy(n => Projectile.Distance(n.Center))
+        .FirstOrDefault();
+
+    if (target != null)
+    {
+        Vector2 toTarget = (target.Center - Projectile.Center).SafeNormalize(Vector2.Zero);
+        Projectile.velocity = Vector2.Lerp(Projectile.velocity, toTarget * 12f, 0.08f);
+    }
+}
+```
+
+### OnTileCollide
+
+Called when the projectile hits a tile. Return `true` to let vanilla kill the projectile, `false` to handle it yourself (e.g. for bouncing).
+
+```csharp
+public override bool OnTileCollide(Vector2 oldVelocity)
+{
+    Projectile.penetrate--;
+    if (Projectile.penetrate <= 0)
+    {
+        Projectile.Kill();
+    }
+    else
+    {
+        // Bounce off tile surfaces
+        if (Math.Abs(Projectile.velocity.X - oldVelocity.X) > float.Epsilon)
+            Projectile.velocity.X = -oldVelocity.X;
+        if (Math.Abs(Projectile.velocity.Y - oldVelocity.Y) > float.Epsilon)
+            Projectile.velocity.Y = -oldVelocity.Y;
+    }
+    return false;
+}
+```
+
+### OnHitNPC
+
+Triggered when this projectile damages an NPC. Use it for debuffs and special effects.
+
+```csharp
+public override void OnHitNPC(NPC target, NPC.HitInfo hit, int damageDone)
+{
+    // Inflict Frostburn for 3 seconds
+    target.AddBuff(BuffID.Frostburn, 180);
+}
+```
+
+### OnHitPlayer
+
+Triggered when this hostile projectile damages a player.
+
+```csharp
+public override void OnHitPlayer(Player target, Player.HurtInfo info)
+{
+    // Slow the player on hit
+    target.AddBuff(BuffID.Slow, 120);
+}
+```
+
+### PreDraw
+
+Draw things behind the projectile or replace the vanilla draw entirely. Return `false` to skip vanilla drawing.
+
+```csharp
+public override bool PreDraw(ref Color lightColor)
+{
+    Texture2D texture = TextureAssets.Projectile[Type].Value;
+    Vector2 drawOrigin = new Vector2(texture.Width * 0.5f, Projectile.height * 0.5f);
+
+    // Draw an afterimage trail
+    for (int k = Projectile.oldPos.Length - 1; k > 0; k--)
+    {
+        Vector2 drawPos = (Projectile.oldPos[k] - Main.screenPosition) + drawOrigin
+            + new Vector2(0f, Projectile.gfxOffY);
+        Color color = Projectile.GetAlpha(lightColor)
+            * ((Projectile.oldPos.Length - k) / (float)Projectile.oldPos.Length);
+        Main.EntitySpriteDraw(texture, drawPos, null, color,
+            Projectile.rotation, drawOrigin, Projectile.scale, SpriteEffects.None, 0);
+    }
+
+    return true; // true = also run vanilla drawing
+}
+```
+
+### PostDraw
+
+Draw things in front of the projectile. Called even if `PreDraw` returns `false`.
+
+```csharp
+public override void PostDraw(Color lightColor)
+{
+    // Draw a glow texture on top
+    Texture2D glow = ModContent.Request<Texture2D>(Texture + "_Glow").Value;
+    Vector2 pos = Projectile.Center - Main.screenPosition;
+    Main.EntitySpriteDraw(glow, pos, null, Color.White,
+        Projectile.rotation, glow.Size() / 2, Projectile.scale, SpriteEffects.None, 0);
+}
+```
+
+### OnKill
+
+Called when the projectile is destroyed. Create death effects here (dust, sounds, spawned items). Guard item/projectile spawning with `if (Projectile.owner == Main.myPlayer)`.
+
+```csharp
+public override void OnKill(int timeLeft)
+{
+    // Spawn dust and sound on death
+    Collision.HitTiles(
+        Projectile.position + Projectile.velocity,
+        Projectile.velocity,
+        Projectile.width,
+        Projectile.height);
+    SoundEngine.PlaySound(SoundID.Item10, Projectile.position);
+}
+```
+
+---
+
+## Full example — ExampleBullet
+
+A piercing, bouncing bullet with an afterimage trail and death sound. Source: `ExampleMod/Content/Projectiles/ExampleBullet.cs`.
+
+```csharp
+public class ExampleBullet : ModProjectile
+{
+    public override void SetStaticDefaults()
+    {
+        ProjectileID.Sets.TrailCacheLength[Type] = 5;
+        ProjectileID.Sets.TrailingMode[Type] = 0;
+    }
+
+    public override void SetDefaults()
+    {
+        Projectile.width = 8;
+        Projectile.height = 8;
+        Projectile.aiStyle = ProjAIStyleID.Arrow;
+        Projectile.friendly = true;
+        Projectile.hostile = false;
+        Projectile.DamageType = DamageClass.Ranged;
+        Projectile.penetrate = 5;
+        Projectile.timeLeft = 600;
+        Projectile.alpha = 255;
+        Projectile.light = 0.5f;
+        Projectile.ignoreWater = true;
+        Projectile.tileCollide = true;
+        Projectile.extraUpdates = 1;
+
+        AIType = ProjectileID.Bullet; // copy vanilla bullet behavior
+    }
+
+    public override bool OnTileCollide(Vector2 oldVelocity)
+    {
+        Projectile.penetrate--;
+        if (Projectile.penetrate <= 0)
+        {
+            Projectile.Kill();
+        }
+        else
+        {
+            Collision.HitTiles(Projectile.position, Projectile.velocity, Projectile.width, Projectile.height);
+            SoundEngine.PlaySound(SoundID.Item10, Projectile.position);
+
+            if (Math.Abs(Projectile.velocity.X - oldVelocity.X) > float.Epsilon)
+                Projectile.velocity.X = -oldVelocity.X;
+            if (Math.Abs(Projectile.velocity.Y - oldVelocity.Y) > float.Epsilon)
+                Projectile.velocity.Y = -oldVelocity.Y;
+        }
+        return false;
+    }
+
+    public override bool PreDraw(ref Color lightColor)
+    {
+        Texture2D texture = TextureAssets.Projectile[Type].Value;
+        Vector2 drawOrigin = new Vector2(texture.Width * 0.5f, Projectile.height * 0.5f);
+
+        for (int k = Projectile.oldPos.Length - 1; k > 0; k--)
+        {
+            Vector2 drawPos = (Projectile.oldPos[k] - Main.screenPosition) + drawOrigin
+                + new Vector2(0f, Projectile.gfxOffY);
+            Color color = Projectile.GetAlpha(lightColor)
+                * ((Projectile.oldPos.Length - k) / (float)Projectile.oldPos.Length);
+            Main.EntitySpriteDraw(texture, drawPos, null, color,
+                Projectile.rotation, drawOrigin, Projectile.scale, SpriteEffects.None, 0);
+        }
+
+        return true;
+    }
+
+    public override void OnKill(int timeLeft)
+    {
+        Collision.HitTiles(
+            Projectile.position + Projectile.velocity,
+            Projectile.velocity,
+            Projectile.width,
+            Projectile.height);
+        SoundEngine.PlaySound(SoundID.Item10, Projectile.position);
+    }
+}
+```
+
+---
+
+## Cloning vanilla behavior
+
+The fastest path to a working projectile is to clone a similar vanilla one with `AIType` and layer your changes on top:
+
+```csharp
+public class StickyArrow : ModProjectile
+{
+    public override void SetDefaults()
+    {
+        Projectile.CloneDefaults(ProjectileID.WoodenArrowFriendly);
+        AIType = ProjectileID.WoodenArrowFriendly;
+    }
+
+    public override void OnHitNPC(NPC target, NPC.HitInfo hit, int damageDone)
+    {
+        // Add a burning debuff that the vanilla arrow doesn't have
+        target.AddBuff(BuffID.OnFire, 120);
+    }
+}
+```
+
+<Tip>
+`Projectile.CloneDefaults(id)` copies all `SetDefaults` values from a vanilla projectile. Use it along with `AIType` to get the full vanilla behavior with minimal boilerplate.
+</Tip>

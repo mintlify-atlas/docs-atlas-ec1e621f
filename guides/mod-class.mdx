@@ -1,0 +1,175 @@
+---
+title: "The Mod Class"
+description: The central class every mod must define, and its lifecycle hooks.
+---
+
+Every tModLoader mod is anchored by a single class that extends `Mod`. This class is the entry point for your mod — it is instantiated once when your mod loads, and tModLoader calls its lifecycle hooks at the appropriate times.
+
+## Declaring your Mod class
+
+Subclass `Mod` exactly once per mod. The class name and its containing namespace are arbitrary; what matters is that the type exists and derives from `Mod`.
+
+```csharp
+using Terraria.ModLoader;
+
+namespace MyMod
+{
+    public class MyMod : Mod
+    {
+    }
+}
+```
+
+You do not need to register this class anywhere. tModLoader discovers it automatically via reflection.
+
+## Key properties
+
+<AccordionGroup>
+  <Accordion title="Name">
+    ```csharp
+    public virtual string Name => File.Name;
+    ```
+    The internal identifier for your mod. By default this returns the name of the folder your mod was built from. This name is used for cross-mod lookups, save data keys, and content identifiers.
+  </Accordion>
+
+  <Accordion title="Version">
+    ```csharp
+    public virtual Version Version => File.Version;
+    ```
+    The version of your mod as declared in your `build.txt`. Use this when you need to do version comparisons in cross-mod code.
+  </Accordion>
+
+  <Accordion title="Logger">
+    ```csharp
+    public ILog Logger { get; internal set; }
+    ```
+    A [log4net](https://logging.apache.org/log4net/) `ILog` instance scoped to your mod's name. Use this for all debug and informational output instead of `Console.WriteLine` or `Main.NewText`.
+  </Accordion>
+
+  <Accordion title="ContentAutoloadingEnabled">
+    ```csharp
+    public bool ContentAutoloadingEnabled { get; init; } = true;
+    ```
+    When `true` (the default), tModLoader automatically discovers all `ModType` subclasses in your assembly and registers them. Set this to `false` if you want full manual control over what content gets loaded. See [Autoloading](/guides/autoloading) for details.
+  </Accordion>
+
+  <Accordion title="Assets">
+    ```csharp
+    public AssetRepository Assets { get; private set; }
+    ```
+    Provides access to textures, sounds, shaders, and other assets packaged inside your mod. Request an asset like this:
+    ```csharp
+    Asset<Texture2D> tex = Mod.Assets.Request<Texture2D>("Content/Items/MyItem");
+    ```
+    Do not include the mod name in the path; it is implied.
+  </Accordion>
+</AccordionGroup>
+
+## Lifecycle hooks
+
+tModLoader calls these virtual methods on your `Mod` instance at specific points during loading and unloading.
+
+### Load()
+
+```csharp
+public virtual void Load()
+```
+
+Called after all content has been autoloaded. Use `Load()` for setup that cannot happen inside individual `ModType.Load()` overrides — for example, subscribing to events, registering hooks with other mods, or loading non-autoloaded assets.
+
+<Warning>
+  Mod content has not finished setting up when `Load()` runs. ID sets and `ModContent` lookup tables are not yet fully populated. If you need to act on fully-loaded content, use `PostSetupContent()` instead.
+</Warning>
+
+### PostSetupContent()
+
+```csharp
+public virtual void PostSetupContent()
+```
+
+Called after all content arrays have been resized and `SetStaticDefaults()` has run for every piece of content. This is the safe place for any logic that needs to iterate over all loaded content or look up item/NPC IDs.
+
+### Unload()
+
+```csharp
+public virtual void Unload()
+```
+
+Called when your mod is unloaded (for example, when the user reloads mods). Use `Unload()` to reverse changes made in `Load()` that tModLoader cannot automatically reverse — for example, unsubscribing from events.
+
+<Note>
+  tModLoader aims to fully dispose mod assemblies between reloads, so nulling out static fields is rarely necessary. However, if you hold references to objects defined in the vanilla assembly (such as event subscriptions on vanilla types), you must clean those up here.
+</Note>
+
+### AddRecipes() / AddRecipeGroups() / PostAddRecipes()
+
+<Warning>
+  These hooks on `Mod` are obsolete. Use `ModSystem.AddRecipes()`, `ModSystem.AddRecipeGroups()`, and `ModSystem.PostAddRecipes()` instead.
+</Warning>
+
+## Example: Load and Unload
+
+The following is based on the `ExampleMod` source:
+
+```csharp
+using Terraria.ModLoader;
+
+namespace MyMod
+{
+    public class MyMod : Mod
+    {
+        public override void Load()
+        {
+            // Subscribe to events, set up hooks, or load additional content here.
+            // For organization, prefer putting per-system logic into ModSystem.Load()
+            // rather than doing everything here.
+        }
+
+        public override void Unload()
+        {
+            // Reverse any changes that won't be cleaned up automatically.
+            // Always use defensive programming here — assume that anything
+            // in your mod might not have been initialized yet.
+            //
+            // Most common reason to unload: event subscriptions on non-mod types.
+            // If you subscribed to an event, unsubscribe here.
+        }
+    }
+}
+```
+
+## Logging
+
+Use `Logger` to write diagnostic output. The output is written to `tModLoader-Logs/` and to the in-game console.
+
+```csharp
+public override void Load()
+{
+    Logger.Info("MyMod is loading.");
+    Logger.Debug("Debug-level detail that won't appear in release builds.");
+    Logger.Warn("Something unexpected but recoverable happened.");
+    Logger.Error("Something went wrong.");
+}
+```
+
+<Tip>
+  Prefer `Logger.Debug` for verbose tracing so it does not clutter logs for end users. `Logger.Info` is appropriate for one-time load messages.
+</Tip>
+
+## Cross-mod communication
+
+The `Call()` method provides a loosely typed channel for other mods to invoke functionality in your mod without a hard assembly reference.
+
+```csharp
+public virtual object Call(params object[] args)
+```
+
+If you want to expose an API to other mods, override `Call()` and document the expected arguments. Other mods can invoke it like this:
+
+```csharp
+Mod myMod;
+if (ModLoader.TryGetMod("MyMod", out myMod))
+{
+    myMod.Call("RegisterSomething", someData);
+}
+```

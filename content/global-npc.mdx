@@ -1,0 +1,289 @@
+---
+title: "GlobalNPC"
+description: "Modify behavior and stats of all NPCs — both vanilla and modded — from a single class."
+---
+
+`GlobalNPC` lets you hook into the behavior of every NPC in the game. Unlike `ModNPC`, which is scoped to a single custom NPC, a `GlobalNPC` subclass runs its hooks for all NPCs — including every vanilla enemy, critter, and town NPC — unless you restrict it with a type check or `AppliesToEntity`.
+
+<Note>
+  Use `GlobalNPC` to add drops to vanilla bosses, implement debuffs that affect all enemies, or change how an entire category of NPCs behaves. Use `ModNPC` when you are creating a brand-new NPC.
+</Note>
+
+## Global vs. mod-specific
+
+| | `GlobalNPC` | `ModNPC` |
+|---|---|---|
+| Applies to | Every NPC in the game | Only the one NPC you define |
+| Primary use | Cross-cutting changes, loot additions, universal debuffs | New NPCs with custom AI and visuals |
+| Instance per NPC | Optional (`InstancePerEntity`) | Always a dedicated instance |
+
+Both types can coexist. You might add a new boss with `ModNPC` and then use `GlobalNPC` to add a conditional drop to every pre-Hardmode boss.
+
+## Basic usage
+
+Create a class that inherits from `GlobalNPC`. tModLoader registers it automatically.
+
+```csharp
+using Terraria;
+using Terraria.ModLoader;
+
+public class MyGlobalNPC : GlobalNPC
+{
+    // Hooks go here
+}
+```
+
+## Targeting specific NPCs
+
+Guard with a type check inside any hook:
+
+```csharp
+public override void SetDefaults(NPC npc)
+{
+    if (npc.type == NPCID.BlueSlime)
+        npc.lifeMax = 500;
+}
+```
+
+Or use `AppliesToEntity` to skip the global entirely for NPCs you do not care about:
+
+```csharp
+public override bool AppliesToEntity(NPC entity, bool lateInstantiation)
+{
+    // Only run this global for bosses
+    return lateInstantiation && entity.boss;
+}
+```
+
+## Storing per-NPC state
+
+Set `InstancePerEntity` to `true` and add instance fields to track data on individual NPCs.
+
+```csharp
+public class MyNPCTracking : GlobalNPC
+{
+    public override bool InstancePerEntity => true;
+
+    public int timesHit;
+}
+```
+
+Retrieve the instance with `npc.GetGlobalNPC<MyNPCTracking>()`.
+
+---
+
+## Key hooks
+
+### `SetDefaults`
+
+Called immediately after an NPC's default stats are applied. Modify health, damage, defense, or any other property here.
+
+```csharp
+public override void SetDefaults(NPC npc)
+{
+    // Make all slimes slightly tougher
+    if (npc.aiStyle == NPCAIStyleID.Slime)
+        npc.lifeMax = (int)(npc.lifeMax * 1.5f);
+}
+```
+
+### `PreAI` / `PostAI`
+
+`PreAI` runs before the NPC's AI. Return `false` to skip the vanilla AI entirely. `PostAI` always runs after, regardless of what `PreAI` returns.
+
+```csharp
+public override bool PreAI(NPC npc)
+{
+    // Custom logic before AI; return false to replace it
+    return true;
+}
+
+public override void PostAI(NPC npc)
+{
+    // Always runs — good for effects that should happen regardless of AI state
+}
+```
+
+### `ModifyNPCLoot`
+
+Add or modify drop rules for specific NPCs. This hook runs once per NPC type during mod loading, so all logic that varies at runtime must live inside the rule itself.
+
+```csharp
+public override void ModifyNPCLoot(NPC npc, NPCLoot npcLoot)
+{
+    // Add a 20% chance to drop ExampleItem from every non-critter
+    if (!NPCID.Sets.CountsAsCritter[npc.type])
+        npcLoot.Add(ItemDropRule.Common(ModContent.ItemType<ExampleItem>(), 5));
+
+    // Add a drop to a specific vanilla boss
+    if (npc.type == NPCID.QueenBee)
+        npcLoot.Add(ItemDropRule.Common(ItemID.Stinger, 3));
+}
+```
+
+<Tip>
+  Use `ModifyGlobalLoot` instead of `ModifyNPCLoot` for drops that should be conditionally available to **all** NPCs (for example, biome keys or holiday items).
+</Tip>
+
+#### Adding drops to vanilla bosses
+
+The typical pattern is to check `npc.type` and call `npcLoot.Add` with the appropriate `IItemDropRule`. You can also modify existing rules by iterating `npcLoot.Get()`:
+
+```csharp
+public override void ModifyNPCLoot(NPC npc, NPCLoot npcLoot)
+{
+    if (npc.type == NPCID.BloodNautilus)
+    {
+        // Increase the normal-mode drop rate of Sanguine Staff from 50% to 100%
+        foreach (var rule in npcLoot.Get())
+        {
+            if (rule is DropBasedOnExpertMode drop
+                && drop.ruleForNormalMode is CommonDrop normal
+                && normal.itemId == ItemID.SanguineStaff)
+            {
+                normal.chanceDenominator = 1;
+            }
+        }
+    }
+}
+```
+
+<Warning>
+  If an NPC has a boss bag, its non-expert drops live in both `ModifyNPCLoot` and in the bag item's `ModifyItemLoot`. Edit both if you want your change to affect expert mode as well.
+</Warning>
+
+### `OnKill`
+
+Runs in single player or on the server when an NPC dies. Use this for world-state side effects (setting flags, spawning NPCs, etc.). Most item drops should be handled through `ModifyNPCLoot` instead.
+
+```csharp
+public override void OnKill(NPC npc)
+{
+    if (npc.type == NPCID.EyeofCthulhu && !NPC.downedBoss1)
+    {
+        // First Eye of Cthulhu kill — do something special
+    }
+}
+```
+
+### `ModifyHitPlayer` / `OnHitPlayer`
+
+`ModifyHitPlayer` lets you change damage modifiers before they are applied. `OnHitPlayer` lets you add effects after the hit lands (debuffs, sounds, etc.).
+
+```csharp
+public override void ModifyHitPlayer(NPC npc, Player target, ref Player.HurtModifiers modifiers)
+{
+    // All NPCs deal 10% more damage
+    modifiers.SourceDamage *= 1.1f;
+}
+
+public override void OnHitPlayer(NPC npc, Player target, Player.HurtInfo hurtInfo)
+{
+    // Inflict Poisoned for 5 seconds on every NPC hit
+    target.AddBuff(BuffID.Poisoned, 300);
+}
+```
+
+### `ModifyHitByItem` / `OnHitByItem`
+
+Intercept or react to a melee item hitting an NPC.
+
+```csharp
+public override void ModifyHitByItem(NPC npc, Player player, Item item, ref NPC.HitModifiers modifiers)
+{
+    // Swords deal double damage to slimes
+    if (item.DamageType == DamageClass.Melee && npc.aiStyle == NPCAIStyleID.Slime)
+        modifiers.SourceDamage *= 2f;
+}
+
+public override void OnHitByItem(NPC npc, Player player, Item item, NPC.HitInfo hit, int damageDone)
+{
+    // Log or trigger effects after the hit
+}
+```
+
+### `ModifyHitByProjectile` / `OnHitByProjectile`
+
+The projectile equivalent of `ModifyHitByItem` / `OnHitByItem`.
+
+```csharp
+public override void ModifyHitByProjectile(NPC npc, Projectile projectile, ref NPC.HitModifiers modifiers) { }
+
+public override void OnHitByProjectile(NPC npc, Projectile projectile, NPC.HitInfo hit, int damageDone)
+{
+    // Apply a debuff when hit by a specific projectile type
+    if (projectile.type == ProjectileID.FlamingArrow)
+        npc.AddBuff(BuffID.OnFire, 120);
+}
+```
+
+### `SaveData` / `LoadData`
+
+Persist custom data attached to an NPC (useful for saveAndLoad NPCs such as town NPCs). Both methods must be overridden together.
+
+```csharp
+public override void SaveData(NPC npc, TagCompound tag)
+{
+    tag["timesHit"] = timesHit;
+}
+
+public override void LoadData(NPC npc, TagCompound tag)
+{
+    timesHit = tag.Get<int>("timesHit");
+}
+```
+
+<Warning>
+  NPCs are normally not saved unless `NPCID.Sets.SavesAndLoads[npc.type]` is true or `NeedSaving` returns true. `SaveData` / `LoadData` are only called for NPCs that are saved.
+</Warning>
+
+---
+
+## Example: damage-over-time debuff
+
+The following example from ExampleMod uses `InstancePerEntity` to track a custom debuff flag per NPC and `UpdateLifeRegen` to apply damage-over-time.
+
+```csharp
+public class DamageOverTimeGlobalNPC : GlobalNPC
+{
+    public override bool InstancePerEntity => true;
+
+    public bool exampleJavelinDebuff;
+
+    // Reset fields each tick so they can be conditionally re-applied
+    public override void ResetEffects(NPC npc)
+    {
+        exampleJavelinDebuff = false;
+    }
+
+    public override void UpdateLifeRegen(NPC npc, ref int damage)
+    {
+        if (exampleJavelinDebuff)
+        {
+            // Prevent life regeneration while the debuff is active
+            if (npc.lifeRegen > 0)
+                npc.lifeRegen = 0;
+
+            // Count attached javelin projectiles for stacking damage
+            int count = 0;
+            foreach (var p in Main.ActiveProjectiles)
+            {
+                if (p.type == ModContent.ProjectileType<ExampleJavelinProjectile>()
+                    && p.ai[0] == 1f && p.ai[1] == npc.whoAmI)
+                {
+                    count++;
+                }
+            }
+
+            // lifeRegen subtracts from the NPC's life per second (2 units = 1 HP/s)
+            npc.lifeRegen -= count * 6;
+            if (damage < count * 3)
+                damage = count * 3;
+        }
+    }
+}
+```
+
+<Tip>
+  The full source is at `ExampleMod/Common/GlobalNPCs/DamageOverTimeGlobalNPC.cs`. A companion projectile sets `exampleJavelinDebuff = true` each tick while attached to the NPC.
+</Tip>

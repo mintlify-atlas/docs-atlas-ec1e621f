@@ -1,0 +1,297 @@
+---
+title: "ModDust"
+description: "Creating custom visual dust particles with unique movement, drawing, and color behavior."
+---
+
+`ModDust` lets you define a new type of dust particle. Dust is used throughout Terraria for visual feedback — hit effects, magic trails, environmental ambiance, and more. Each `ModDust` subclass is a singleton that controls the behavior of every dust particle of that type.
+
+<Note>
+  `ModDust` is client-side only (`[Autoload(Side = ModSide.Client)]`). Never use dust types in server-side logic.
+</Note>
+
+## Creating a dust type
+
+Create a class that extends `ModDust`. tModLoader autoloads it at startup.
+
+```csharp
+using Terraria;
+using Terraria.ModLoader;
+
+namespace MyMod.Content.Dusts
+{
+    public class MyDust : ModDust
+    {
+        public override void OnSpawn(Dust dust)
+        {
+            dust.noGravity = true;
+            dust.scale *= 1.5f;
+        }
+
+        public override bool Update(Dust dust)
+        {
+            dust.position += dust.velocity;
+            dust.scale *= 0.98f;
+
+            if (dust.scale < 0.3f)
+                dust.active = false;
+
+            return false; // Return false to skip vanilla behavior
+        }
+    }
+}
+```
+
+### Texture
+
+Place a PNG sprite sheet at the same path as your class (e.g., `Content/Dusts/MyDust.png`). A standard dust sheet is a vertical stack of three 10×10 pixel frames. tModLoader picks one frame at random when spawning.
+
+If you want to reuse a vanilla dust texture, override the `Texture` property:
+
+```csharp
+public override string Texture => null; // Uses the vanilla dust sprite sheet
+```
+
+When `Texture` is `null`, you must manually set `dust.frame` in `OnSpawn` to point to the correct region of the vanilla sheet.
+
+## Spawning dust
+
+Use `Dust.NewDust` or `Dust.NewDustDirect` with `ModContent.DustType<T>()` to create particles:
+
+```csharp
+// Spawn dust at a position with some spread (returns the dust index)
+int dustIndex = Dust.NewDust(
+    position,       // Top-left of spawn area
+    width,          // Width of spawn area in pixels
+    height,         // Height of spawn area in pixels
+    ModContent.DustType<MyDust>(),
+    speedX: 0f,
+    speedY: -1f,
+    Scale: 1.5f
+);
+
+// NewDustDirect returns the Dust object directly for further setup
+Dust dust = Dust.NewDustDirect(
+    player.Center,
+    0, 0,
+    ModContent.DustType<MyDust>(),
+    Scale: 2f
+);
+dust.noGravity = true;
+```
+
+<Tip>
+  `Dust.NewDustDirect` returns the `Dust` instance, making it convenient when you need to set fields like `customData`, `rotation`, or `noGravity` right after spawning.
+</Tip>
+
+## Key hooks
+
+### `SetStaticDefaults()`
+
+Called once during loading. Use it to set `UpdateType` if you want your dust to reuse vanilla update logic as a base, or to configure `ChildSafety.SafeDust`:
+
+```csharp
+public override void SetStaticDefaults()
+{
+    // Copy vanilla fire dust behavior, then customize via other hooks
+    UpdateType = DustID.Torch;
+}
+```
+
+### `OnSpawn(Dust dust)`
+
+Called immediately when a dust particle is created. Use this to set initial properties:
+
+```csharp
+public override void OnSpawn(Dust dust)
+{
+    dust.velocity *= 0.4f;  // Slow the initial velocity
+    dust.noGravity = true;
+    dust.noLight = true;
+    dust.scale *= 1.5f;
+}
+```
+
+### `Update(Dust dust)`
+
+Called every frame the particle is alive. Return `false` to suppress all vanilla dust update logic (recommended when you handle movement yourself). Return `true` to let vanilla behavior also run after yours:
+
+```csharp
+public override bool Update(Dust dust)
+{
+    dust.position += dust.velocity;
+    dust.rotation += dust.velocity.X * 0.15f;
+    dust.scale *= 0.99f;
+
+    Lighting.AddLight(dust.position, 0.35f * dust.scale, 0.35f * dust.scale, 0.35f * dust.scale);
+
+    if (dust.scale < 0.5f)
+        dust.active = false;
+
+    return false; // Skip vanilla behavior
+}
+```
+
+### `MidUpdate(Dust dust)`
+
+A secondary update hook that runs during vanilla processing. Return `true` to signal that you applied custom behavior; return `false` to let the dust decelerate on its own:
+
+```csharp
+public override bool MidUpdate(Dust dust)
+{
+    // Custom mid-frame behavior
+    return true;
+}
+```
+
+### `GetAlpha(Dust dust, Color lightColor)`
+
+Override the draw color of the dust. Return `null` to use the normal light color. Useful for making dust ignore lighting or applying a tint:
+
+```csharp
+public override Color? GetAlpha(Dust dust, Color lightColor)
+{
+    // Blend 80% toward white, then reduce alpha for a ghostly look
+    lightColor = Color.Lerp(lightColor, Color.White, 0.8f);
+    return new Color(lightColor.R, lightColor.G, lightColor.B, 25);
+}
+```
+
+Alternatively, set `dust.noLight = true` in `OnSpawn` to draw at full brightness without any tint.
+
+### `PreDraw(Dust dust)`
+
+Called before the default draw. Return `false` to prevent the default drawing (useful if you draw the dust yourself). Return `true` to allow the default draw to follow:
+
+```csharp
+public override bool PreDraw(Dust dust)
+{
+    // Draw a motion trail before the main particle
+    float trailLength = Math.Abs(dust.velocity.X) + Math.Abs(dust.velocity.Y);
+    trailLength = Math.Min(trailLength * 3f, 10f);
+
+    Color drawColor = dust.GetAlpha(Lighting.GetColor(
+        (int)(dust.position.X + 4) / 16,
+        (int)(dust.position.Y + 4) / 16
+    ));
+
+    for (int i = 0; i < trailLength; i++)
+    {
+        Vector2 trailPos = dust.position - dust.velocity * i;
+        float trailScale = dust.scale * (1f - i / 10f);
+        Main.spriteBatch.Draw(
+            Texture2D.Value,
+            trailPos - Main.screenPosition,
+            dust.frame,
+            drawColor,
+            dust.rotation,
+            new Vector2(4f, 4f),
+            trailScale,
+            SpriteEffects.None,
+            0f
+        );
+    }
+
+    return true; // Still draw the default particle at full scale
+}
+```
+
+## Example: `Sparkle`
+
+A simple glowing dust from ExampleMod. It floats upward, rotates, and fades out:
+
+```csharp
+using Terraria;
+using Terraria.ModLoader;
+
+namespace ExampleMod.Content.Dusts
+{
+    public class Sparkle : ModDust
+    {
+        public override void OnSpawn(Dust dust)
+        {
+            dust.velocity *= 0.4f; // Multiply the dust's start velocity by 0.4, slowing it down
+            dust.noGravity = true; // Makes the dust have no gravity.
+            dust.noLight = true;   // Makes the dust emit no light.
+            dust.scale *= 1.5f;    // Multiplies the dust's initial scale by 1.5.
+        }
+
+        public override bool Update(Dust dust) // Calls every frame the dust is active
+        {
+            dust.position += dust.velocity;
+            dust.rotation += dust.velocity.X * 0.15f;
+            dust.scale *= 0.99f;
+
+            float light = 0.35f * dust.scale;
+            Lighting.AddLight(dust.position, light, light, light);
+
+            if (dust.scale < 0.5f)
+                dust.active = false;
+
+            return false; // Return false to prevent vanilla behavior.
+        }
+    }
+}
+```
+
+Spawn it anywhere you have a world position:
+
+```csharp
+Dust.NewDust(player.position, player.width, player.height, ModContent.DustType<Sparkle>());
+```
+
+## Example: `ExampleAdvancedDust`
+
+This ExampleMod dust uses `customData` to orbit a player, demonstrating how to store arbitrary data on a dust instance:
+
+```csharp
+using Microsoft.Xna.Framework;
+using Terraria;
+using Terraria.ID;
+using Terraria.ModLoader;
+
+namespace ExampleMod.Content.Dusts
+{
+    internal class ExampleAdvancedDust : ModDust
+    {
+        public override string Texture => null; // Reuse vanilla dust texture
+
+        public override void OnSpawn(Dust dust)
+        {
+            dust.noGravity = true;
+
+            int desiredVanillaDustTexture = DustID.Confetti;
+            int frameX = desiredVanillaDustTexture * 10 % 1000;
+            int frameY = desiredVanillaDustTexture * 10 / 1000 * 30 + Main.rand.Next(3) * 10;
+            dust.frame = new Rectangle(frameX, frameY, 8, 8);
+            dust.velocity = Vector2.Zero;
+        }
+
+        public override bool Update(Dust dust)
+        {
+            // Alternate clockwise/counter-clockwise rotation
+            dust.rotation += 0.1f * (dust.dustIndex % 2 == 0 ? -1 : 1);
+            dust.scale -= 0.05f;
+
+            if (dust.customData is Player player)
+            {
+                // Spiral toward the player center as scale shrinks
+                dust.position = player.Center + Vector2.UnitX.RotatedBy(dust.rotation) * dust.scale * 50;
+            }
+
+            if (dust.scale < 0.25f)
+                dust.active = false;
+
+            return false;
+        }
+    }
+}
+```
+
+Spawn it with the required initial setup:
+
+```csharp
+Dust dust = Dust.NewDustDirect(Player.Center, 0, 0, ModContent.DustType<ExampleAdvancedDust>(), Scale: 2);
+dust.rotation = Main.rand.NextFloat(6.28f);
+dust.customData = Player;
+dust.position = Player.Center + Vector2.UnitX.RotatedBy(dust.rotation) * dust.scale * 50;
+```

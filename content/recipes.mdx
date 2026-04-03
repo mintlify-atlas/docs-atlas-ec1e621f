@@ -1,0 +1,330 @@
+---
+title: "Recipes"
+description: "Adding new crafting recipes, using recipe groups, and modifying existing recipes from vanilla or other mods."
+---
+
+Recipes in tModLoader are defined in a `ModSystem` subclass. The three hooks you'll use most are `AddRecipeGroups`, `AddRecipes`, and `PostAddRecipes`. These hooks are called in that order during mod loading, after all content has been registered.
+
+## Creating a basic recipe
+
+Override `AddRecipes` in a `ModSystem` class and call `Recipe.Create` to start building:
+
+```csharp
+using Terraria;
+using Terraria.ID;
+using Terraria.ModLoader;
+
+namespace MyMod.Content
+{
+    public class MyRecipes : ModSystem
+    {
+        public override void AddRecipes()
+        {
+            Recipe recipe = Recipe.Create(ModContent.ItemType<Items.MySword>());
+            recipe.AddIngredient(ItemID.IronBar, 10);
+            recipe.AddIngredient(ItemID.Wood, 5);
+            recipe.AddTile(TileID.Anvils);
+            recipe.Register();
+        }
+    }
+}
+```
+
+### Method chaining
+
+All `Recipe` methods (except `Register`) return the recipe instance, so you can chain calls:
+
+```csharp
+Recipe.Create(ModContent.ItemType<Items.MySword>(), amount: 1)
+    .AddIngredient(ItemID.IronBar, 10)
+    .AddIngredient(ItemID.Wood, 5)
+    .AddTile(TileID.Anvils)
+    .Register();
+```
+
+<Note>
+  When chaining, only the last line needs a semicolon. The chain ends at `.Register()`.
+</Note>
+
+## `Recipe.Create`
+
+```csharp
+Recipe.Create(int itemType, int amount = 1)
+```
+
+Starts a new recipe producing `amount` of `itemType`. Use `ModContent.ItemType<T>()` for modded items or `ItemID.*` constants for vanilla items.
+
+## Adding ingredients
+
+### `AddIngredient`
+
+```csharp
+recipe.AddIngredient(ItemID.Wood, 5);           // Vanilla item, stack of 5
+recipe.AddIngredient<Items.MyItem>(3);          // Modded item, stack of 3
+recipe.AddIngredient(Mod, "MyItem", 3);         // String-based (use for other mods' items)
+```
+
+The stack parameter defaults to 1 if omitted.
+
+### `AddRecipeGroup`
+
+Recipe groups let a recipe accept any item from a set of equivalents (for example, any wood type or any iron bar):
+
+```csharp
+recipe.AddRecipeGroup(RecipeGroupID.Wood);          // Any wood type
+recipe.AddRecipeGroup(RecipeGroupID.IronBar, 5);    // Any iron or lead bar, stack of 5
+recipe.AddRecipeGroup("ExampleMod:ExampleItem", 2); // Custom modded group
+```
+
+See [recipe groups](#recipe-groups) below for how to define your own.
+
+## Adding a crafting station
+
+### `AddTile`
+
+```csharp
+recipe.AddTile(TileID.WorkBenches);                        // Vanilla tile
+recipe.AddTile<Tiles.Furniture.ExampleWorkbench>();        // Modded tile
+```
+
+You can call `AddTile` multiple times to require more than one station simultaneously.
+
+## Adding conditions
+
+`Condition` is a built-in set of predefined contextual requirements:
+
+```csharp
+recipe.AddCondition(Condition.InDesert);
+recipe.AddCondition(Condition.NearWater);
+recipe.AddCondition(Condition.TimeNight);
+```
+
+You can also create a custom condition inline with a description and a delegate:
+
+```csharp
+recipe.AddCondition(
+    Language.GetOrRegister("Mods.MyMod.Conditions.LowHealth"),
+    () => Main.LocalPlayer.statLife < Main.LocalPlayer.statLifeMax / 2
+);
+```
+
+## `Register()`
+
+Always call `Register()` as the final step. Without it, the recipe is not added to the game.
+
+## Recipe groups
+
+Recipe groups allow a single recipe slot to accept multiple interchangeable items. Define them in `AddRecipeGroups`, which is called before `AddRecipes`.
+
+```csharp
+public static RecipeGroup ExampleRecipeGroup;
+
+public override void AddRecipeGroups()
+{
+    // "Any ExampleItem" group containing two mod items
+    ExampleRecipeGroup = new RecipeGroup(
+        () => $"{Language.GetTextValue("LegacyMisc.37")} {Lang.GetItemNameValue(ModContent.ItemType<Items.ExampleItem>())}",
+        ModContent.ItemType<Items.ExampleItem>(),
+        ModContent.ItemType<Items.ExampleDataItem>()
+    );
+
+    // Name with mod prefix to avoid collisions when a modded item is the group's icon
+    RecipeGroup.RegisterGroup("ExampleMod:ExampleItem", ExampleRecipeGroup);
+
+    // Add a modded item into an existing vanilla group
+    RecipeGroup.recipeGroups[RecipeGroupID.GoldenCritter].ValidItems.Add(
+        ModContent.ItemType<ExampleCritterItem>()
+    );
+}
+```
+
+<Tip>
+  When a vanilla item is the first (iconic) item in a group, you can use `nameof(ItemID.SilverBar)` as the group name. tModLoader merges groups registered under the same name, so multiple mods can contribute to the same concept without conflict.
+</Tip>
+
+## Editing vanilla recipes in `PostAddRecipes`
+
+`PostAddRecipes` runs after all mods have called `AddRecipes`. Use it to modify or remove existing recipes:
+
+```csharp
+public override void PostAddRecipes()
+{
+    for (int i = 0; i < Recipe.numRecipes; i++)
+    {
+        Recipe recipe = Main.recipe[i];
+
+        // Double the wood requirement in every recipe that uses wood
+        if (recipe.TryGetIngredient(ItemID.Wood, out Item ingredient))
+        {
+            ingredient.stack *= 2;
+        }
+    }
+}
+```
+
+<Warning>
+  `PostAddRecipes` is the correct place to edit recipes from other mods. Modifying recipes during `AddRecipes` may not work because the other mod's recipes haven't been registered yet.
+</Warning>
+
+## Custom item consumption
+
+Use `AddConsumeIngredientCallback` to control whether (and how much of) an ingredient is consumed. This mirrors how the Alchemy Table works:
+
+```csharp
+Recipe.Create(ItemID.AlphabetStatueJ)
+    .AddIngredient(ItemID.StoneBlock, 10)
+    .AddIngredient(ItemID.Chain)
+    .AddConsumeIngredientCallback(DontConsumeChain)
+    .AddTile(TileID.HeavyWorkBench)
+    .Register();
+
+// The callback — set amount to 0 to prevent consumption
+public static void DontConsumeChain(Recipe recipe, int type, ref int amount, bool isDecrafting)
+{
+    if (type == ItemID.Chain)
+        amount = 0;
+}
+```
+
+## Custom craft behavior
+
+Use `AddOnCraftCallback` to run code when the recipe is crafted:
+
+```csharp
+Recipe.Create(ItemID.AlphabetStatueZ)
+    .AddIngredient(ItemID.StoneBlock, 10)
+    .AddIngredient(ItemID.Chain)
+    .AddOnCraftCallback(RandomlySpawnFireworks)
+    .AddTile(TileID.HeavyWorkBench)
+    .Register();
+
+// The callback — runs after a successful craft
+public static void RandomlySpawnFireworks(Recipe recipe, Item item, List<Item> consumedItems, Item destinationStack)
+{
+    if (Main.rand.NextBool(3))
+    {
+        int fireworkProjectile = ProjectileID.RocketFireworksBoxRed + Main.rand.Next(4);
+        Projectile.NewProjectile(
+            Main.LocalPlayer.GetSource_FromThis(),
+            Main.LocalPlayer.Top,
+            new Vector2(0, -Main.rand.NextFloat(2f, 4f)).RotatedByRandom(0.3f),
+            fireworkProjectile, 0, 0, Main.myPlayer
+        );
+        Main.LocalPlayer.QuickSpawnItem(Main.LocalPlayer.GetSource_FromThis(), ItemID.Confetti, 5);
+    }
+}
+```
+
+## Cloning recipes
+
+If you need several similar recipes, clone an existing one and adjust it:
+
+```csharp
+Recipe baseRecipe = Recipe.Create(ModContent.ItemType<Items.ExampleItem>(), 10);
+baseRecipe.AddIngredient(ItemID.Wood, 10)
+    .AddIngredient(ItemID.CopperCoin)
+    .AddCondition(Condition.InBeach)
+    .AddCondition(Condition.TimeDay)
+    .Register();
+
+Recipe clonedRecipe = baseRecipe.Clone()
+    .AddIngredient(ItemID.SilverCoin)
+    .AddTile(TileID.Anvils);
+
+clonedRecipe.RemoveIngredient(ItemID.CopperCoin);
+clonedRecipe.RemoveCondition(Condition.InBeach);
+clonedRecipe.Register();
+```
+
+## Complete example
+
+The following is an annotated excerpt from `ExampleMod/Content/ExampleRecipes.cs`, showing all major recipe features together:
+
+```csharp
+using Terraria;
+using Terraria.ID;
+using Terraria.Localization;
+using Terraria.ModLoader;
+
+namespace ExampleMod.Content
+{
+    public class ExampleRecipes : ModSystem
+    {
+        public static RecipeGroup ExampleRecipeGroup;
+
+        public override void Unload()
+        {
+            ExampleRecipeGroup = null;
+        }
+
+        public override void AddRecipeGroups()
+        {
+            // Create a group that accepts ExampleItem or ExampleDataItem
+            ExampleRecipeGroup = new RecipeGroup(
+                () => $"{Language.GetTextValue("LegacyMisc.37")} {Lang.GetItemNameValue(ModContent.ItemType<Items.ExampleItem>())}",
+                ModContent.ItemType<Items.ExampleItem>(),
+                ModContent.ItemType<Items.ExampleDataItem>()
+            );
+            RecipeGroup.RegisterGroup("ExampleMod:ExampleItem", ExampleRecipeGroup);
+
+            // Add ExampleCritterItem to the vanilla GoldenCritter group
+            RecipeGroup.recipeGroups[RecipeGroupID.GoldenCritter].ValidItems.Add(
+                ModContent.ItemType<ExampleCritterItem>()
+            );
+        }
+
+        public override void AddRecipes()
+        {
+            // Simple recipe: 1 stone block → 999 ExampleItems
+            Recipe recipe = Recipe.Create(ModContent.ItemType<Items.ExampleItem>(), 999);
+            recipe.AddIngredient(ItemID.StoneBlock);
+            recipe.Register();
+
+            // Chained recipe with all features demonstrated
+            ModContent.GetInstance<Items.ExampleItem>().CreateRecipe()
+                .AddIngredient(ItemID.StoneBlock)
+                .AddIngredient(ItemID.Acorn, 10)
+                .AddIngredient<Items.Weapons.ExampleSword>()
+                .AddRecipeGroup(RecipeGroupID.IronBar, 2)
+                .AddRecipeGroup(ExampleRecipeGroup, 2)
+                .AddTile(TileID.WorkBenches)
+                .AddTile<Tiles.Furniture.ExampleWorkbench>()
+                .AddCondition(Condition.InDesert)
+                .AddCondition(Condition.NearWater)
+                .AddCondition(Condition.TimeNight)
+                .AddCondition(
+                    Language.GetOrRegister("Mods.ExampleMod.Conditions.LowHealth"),
+                    () => Main.LocalPlayer.statLife < Main.LocalPlayer.statLifeMax / 2
+                )
+                .Register();
+
+            // Recipe with custom item consumption (Chain is not consumed)
+            Recipe.Create(ItemID.AlphabetStatueJ)
+                .AddIngredient(ItemID.StoneBlock, 10)
+                .AddIngredient(ItemID.Chain)
+                .AddConsumeIngredientCallback(ExampleRecipeCallbacks.DontConsumeChain)
+                .AddTile(TileID.HeavyWorkBench)
+                .Register();
+
+            // Recipe with on-craft callback (may spawn fireworks)
+            Recipe.Create(ItemID.AlphabetStatueZ)
+                .AddIngredient(ItemID.StoneBlock, 10)
+                .AddIngredient(ItemID.Chain)
+                .AddOnCraftCallback(ExampleRecipeCallbacks.RandomlySpawnFireworks)
+                .AddTile(TileID.HeavyWorkBench)
+                .Register();
+        }
+
+        public override void PostAddRecipes()
+        {
+            // Double the wood cost in every recipe that uses wood
+            for (int i = 0; i < Recipe.numRecipes; i++)
+            {
+                Recipe r = Main.recipe[i];
+                if (r.TryGetIngredient(ItemID.Wood, out Item ingredient))
+                    ingredient.stack *= 2;
+            }
+        }
+    }
+}
+```

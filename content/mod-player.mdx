@@ -1,0 +1,352 @@
+---
+title: "ModPlayer"
+description: Extending the Player class with custom data and hooks
+---
+
+`ModPlayer` lets you attach custom fields and behavior to any `Player` instance. Every active player in the world gets one instance of your `ModPlayer` subclass attached to it automatically.
+
+```csharp
+using Terraria;
+using Terraria.ModLoader;
+
+public class MyPlayer : ModPlayer
+{
+    // Custom fields
+    public bool HasBonusDamage;
+    public int SpecialCooldown;
+
+    public override void ResetEffects()
+    {
+        HasBonusDamage = false;
+        // SpecialCooldown is managed manually — do not reset it here
+    }
+}
+```
+
+Retrieve the instance from any `Player` with:
+
+```csharp
+MyPlayer myPlayer = player.GetModPlayer<MyPlayer>();
+```
+
+<Note>
+There is exactly one `ModPlayer` instance per mod per `Player`. All fields on your `ModPlayer` are per-player — they are not shared between players.
+</Note>
+
+---
+
+## The ResetEffects pattern
+
+Terraria re-evaluates player stats and effects every tick. Any field that is set conditionally (e.g. "while an accessory is equipped") must be reset to its default in `ResetEffects` each frame. Do not track equipped/unequipped state manually.
+
+```csharp
+public class MyPlayer : ModPlayer
+{
+    public bool FireImmunity;
+    public float DamageBonus;
+
+    // 1. Reset to defaults each frame
+    public override void ResetEffects()
+    {
+        FireImmunity = false;
+        DamageBonus = 0f;
+    }
+}
+```
+
+An accessory then sets the field each frame while it is worn:
+
+```csharp
+// In MyAccessory.UpdateAccessory:
+public override void UpdateAccessory(Player player, bool hideVisual)
+{
+    player.GetModPlayer<MyPlayer>().FireImmunity = true;
+}
+```
+
+---
+
+## Key hooks
+
+### Initialize
+
+Called when the player is loaded on the character select screen. Use this to initialize data structures that need to exist before the first `ResetEffects` call.
+
+```csharp
+public override void Initialize()
+{
+    // Safe place to allocate collections
+    UnlockedAbilities = new HashSet<int>();
+}
+```
+
+### PreUpdate / PostUpdate
+
+Bracket the main player update. `PreUpdate` runs at the very start of the tick, before buffs, equips, and movement are processed. `PostUpdate` runs after everything.
+
+```csharp
+public override void PreUpdate()
+{
+    // Tick down a cooldown every frame
+    if (SpecialCooldown > 0)
+        SpecialCooldown--;
+}
+
+public override void PostUpdate()
+{
+    // React to final player state after all updates
+    if (Player.velocity.Length() > 20f)
+        SpawnSpeedTrail();
+}
+```
+
+### PostUpdateEquips
+
+Called after all armor and accessory effects have been applied for the tick. Use this to override or clamp stat values that equips set.
+
+```csharp
+public override void PostUpdateEquips()
+{
+    // Cap a bonus added by accessories
+    if (Player.moveSpeed > 2f)
+        Player.moveSpeed = 2f;
+}
+```
+
+### UpdateLifeRegen
+
+Implement damage-over-time debuffs or healing-over-time bonuses. Subtract from `Player.lifeRegen` for damage, add to it for healing. The player loses/gains `lifeRegen / 2` health per second.
+
+```csharp
+public override void UpdateLifeRegen()
+{
+    if (Player.HasBuff(ModContent.BuffType<MyPoisonBuff>()))
+    {
+        // Damage at 4 HP/sec
+        if (Player.lifeRegen > 0)
+            Player.lifeRegen = 0;
+        Player.lifeRegenTime = 0;
+        Player.lifeRegen -= 8;
+    }
+}
+```
+
+### ModifyMaxStats
+
+Increase the player's maximum health or mana. Always call `base.ModifyMaxStats(out health, out mana)` first.
+
+```csharp
+public override void ModifyMaxStats(out StatModifier health, out StatModifier mana)
+{
+    base.ModifyMaxStats(out health, out mana);
+    // Each collected ExampleLifeFruit adds permanent health
+    health.Base = exampleLifeFruits * ExampleLifeFruit.LifePerFruit;
+    mana.Base = exampleManaCrystals * ExampleManaCrystal.ManaPerCrystal;
+}
+```
+
+### SaveData / LoadData
+
+Persist player-specific data across sessions. Both methods must be overridden together.
+
+```csharp
+public override void SaveData(TagCompound tag)
+{
+    tag["exampleLifeFruits"] = exampleLifeFruits;
+    tag["exampleManaCrystals"] = exampleManaCrystals;
+}
+
+public override void LoadData(TagCompound tag)
+{
+    exampleLifeFruits = tag.GetInt("exampleLifeFruits");
+    exampleManaCrystals = tag.GetInt("exampleManaCrystals");
+}
+```
+
+<Warning>
+Write defensive `LoadData` code. The tag may be missing keys if the player was last saved with an older version of your mod. Use `tag.GetInt` (returns `0` if missing) rather than `(int)tag["key"]` (throws if missing).
+</Warning>
+
+### CopyClientState / SendClientChanges
+
+Used together to sync custom player data over the network. `CopyClientState` captures a snapshot of the state you want to monitor. `SendClientChanges` compares the snapshot to the current state and sends a packet if anything changed.
+
+```csharp
+public override void CopyClientState(ModPlayer targetCopy)
+{
+    ExampleStatIncreasePlayer clone = (ExampleStatIncreasePlayer)targetCopy;
+    clone.exampleLifeFruits = exampleLifeFruits;
+    clone.exampleManaCrystals = exampleManaCrystals;
+}
+
+public override void SendClientChanges(ModPlayer clientPlayer)
+{
+    ExampleStatIncreasePlayer clone = (ExampleStatIncreasePlayer)clientPlayer;
+    if (exampleLifeFruits != clone.exampleLifeFruits
+        || exampleManaCrystals != clone.exampleManaCrystals)
+    {
+        // SyncPlayer sends a full packet; a real mod might send only the delta
+        SyncPlayer(toWho: -1, fromWho: Main.myPlayer, newPlayer: false);
+    }
+}
+```
+
+### GetDamage / ModifyHitNPC
+
+Adjust outgoing damage or apply effects when the player hits an NPC.
+
+```csharp
+// Increase all damage by 10% when a buff is active
+public override void GetDamage(
+    DamageClass damageClass, ref StatModifier damage)
+{
+    if (Player.HasBuff(ModContent.BuffType<FuryBuff>()))
+        damage *= 1.1f;
+}
+
+// Apply a debuff on any NPC hit
+public override void ModifyHitNPC(
+    NPC target, ref NPC.HitModifiers modifiers)
+{
+    if (HasBonusDamage)
+        modifiers.FlatBonusDamage += 10;
+}
+```
+
+---
+
+## Full example — SimpleModPlayer
+
+The pattern every `ModPlayer` follows: declare a field, reset it in `ResetEffects`, use it in a hook. Source: `ExampleMod/Common/Players/SimpleModPlayer.cs`.
+
+```csharp
+public class SimpleModPlayer : ModPlayer
+{
+    // Custom state flag
+    public bool FrostBurnSummon;
+
+    // Reset every frame so it must be re-applied each tick
+    public override void ResetEffects()
+    {
+        FrostBurnSummon = false;
+    }
+
+    // Use the flag in a hook
+    public override void OnHitNPCWithProj(
+        Projectile proj, NPC target, NPC.HitInfo hit, int damageDone)
+    {
+        // Apply Frostburn when a minion/sentry hits an enemy
+        if (proj.IsMinionOrSentryRelated && FrostBurnSummon && !proj.noEnchantments)
+            target.AddBuff(BuffID.Frostburn, 60 * Main.rand.Next(3, 6));
+    }
+}
+```
+
+An accessory sets the flag:
+
+```csharp
+[AutoloadEquip(EquipType.Neck, EquipType.Balloon)]
+public class SimpleAccessory : ModItem
+{
+    public override void SetDefaults()
+    {
+        Item.width = 34;
+        Item.height = 34;
+        Item.accessory = true;
+        Item.value = Item.buyPrice(gold: 15);
+        Item.rare = ItemRarityID.Pink;
+    }
+
+    public override void UpdateAccessory(Player player, bool hideVisual)
+    {
+        player.GetModPlayer<SimpleModPlayer>().FrostBurnSummon = true;
+    }
+}
+```
+
+---
+
+## Full example — ExampleStatIncreasePlayer
+
+Persistent stat increases with save/load and multiplayer sync. Source: `ExampleMod/Common/Players/ExampleStatIncreasePlayer.cs`.
+
+```csharp
+public class ExampleStatIncreasePlayer : ModPlayer
+{
+    public int exampleLifeFruits;
+    public int exampleManaCrystals;
+
+    public override void ModifyMaxStats(out StatModifier health, out StatModifier mana)
+    {
+        base.ModifyMaxStats(out health, out mana);
+        health.Base = exampleLifeFruits * ExampleLifeFruit.LifePerFruit;
+        mana.Base = exampleManaCrystals * ExampleManaCrystal.ManaPerCrystal;
+    }
+
+    public override void SyncPlayer(int toWho, int fromWho, bool newPlayer)
+    {
+        ModPacket packet = Mod.GetPacket();
+        packet.Write((byte)ExampleMod.MessageType.ExampleStatIncreasePlayerSync);
+        packet.Write((byte)Player.whoAmI);
+        packet.Write((byte)exampleLifeFruits);
+        packet.Write((byte)exampleManaCrystals);
+        packet.Send(toWho, fromWho);
+    }
+
+    public override void CopyClientState(ModPlayer targetCopy)
+    {
+        ExampleStatIncreasePlayer clone = (ExampleStatIncreasePlayer)targetCopy;
+        clone.exampleLifeFruits = exampleLifeFruits;
+        clone.exampleManaCrystals = exampleManaCrystals;
+    }
+
+    public override void SendClientChanges(ModPlayer clientPlayer)
+    {
+        ExampleStatIncreasePlayer clone = (ExampleStatIncreasePlayer)clientPlayer;
+        if (exampleLifeFruits != clone.exampleLifeFruits
+            || exampleManaCrystals != clone.exampleManaCrystals)
+        {
+            SyncPlayer(toWho: -1, fromWho: Main.myPlayer, newPlayer: false);
+        }
+    }
+
+    public override void SaveData(TagCompound tag)
+    {
+        tag["exampleLifeFruits"] = exampleLifeFruits;
+        tag["exampleManaCrystals"] = exampleManaCrystals;
+    }
+
+    public override void LoadData(TagCompound tag)
+    {
+        exampleLifeFruits = tag.GetInt("exampleLifeFruits");
+        exampleManaCrystals = tag.GetInt("exampleManaCrystals");
+    }
+}
+```
+
+---
+
+## Hook execution order
+
+The hooks run in this order each player tick:
+
+<Steps>
+  <Step title="ResetEffects">
+    All mod-added fields are reset to defaults.
+  </Step>
+  <Step title="PreUpdate">
+    Runs before buffs, equips, and movement.
+  </Step>
+  <Step title="PreUpdateBuffs / PostUpdateBuffs">
+    Brackets the buff update loop.
+  </Step>
+  <Step title="UpdateEquips / PostUpdateEquips">
+    Brackets the armor and accessory update loop.
+  </Step>
+  <Step title="PostUpdateMiscEffects">
+    Miscellaneous post-equip processing.
+  </Step>
+  <Step title="PostUpdate">
+    Runs after everything else in the tick.
+  </Step>
+</Steps>

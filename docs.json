@@ -1,122 +1,96 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "tModLoader",
+  "theme": "maple",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#849890",
+    "light": "#345454"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/7fb65927-8ad1-4664-9b77-2e7732321846.png",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/tModLoader/tModLoader"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/tModLoader/tModLoader"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Getting Started",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Overview",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "getting-started/players",
+              "getting-started/developers"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Your First Mod",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "guides/first-mod",
+              "guides/mod-structure",
+              "guides/building-and-testing"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
-            ]
-          },
-          {
-            "group": "AI tools",
-            "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "guides/mod-class",
+              "guides/autoloading",
+              "guides/localization",
+              "guides/mod-config"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Content Types",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Entities",
             "pages": [
-              "api-reference/introduction"
+              "content/mod-item",
+              "content/mod-npc",
+              "content/mod-projectile",
+              "content/mod-player"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "World & Environment",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "content/mod-tile",
+              "content/mod-wall",
+              "content/mod-biome",
+              "content/mod-system"
+            ]
+          },
+          {
+            "group": "Global Hooks",
+            "pages": [
+              "content/global-item",
+              "content/global-npc",
+              "content/global-projectile",
+              "content/global-tile"
+            ]
+          },
+          {
+            "group": "Advanced Content",
+            "pages": [
+              "content/mod-buff",
+              "content/mod-dust",
+              "content/recipes",
+              "content/networking"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

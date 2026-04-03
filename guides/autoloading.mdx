@@ -1,0 +1,152 @@
+---
+title: "Autoloading"
+description: How tModLoader discovers and registers mod content automatically.
+---
+
+tModLoader uses reflection to scan your mod's assembly at load time and automatically instantiate and register every class that derives from a known content base type. This means you do not need to manually call any registration methods — just write your class and tModLoader takes care of the rest.
+
+## How autoloading works
+
+When a mod loads, tModLoader iterates over all non-abstract types in the mod's assembly. For each type that implements `ILoadable` (which all `ModType` subclasses do), it calls `Mod.AddContent()` on a new instance. This triggers the type's `Load()` and `Register()` methods, wiring the content into the game.
+
+The base class that powers this is `ModType`:
+
+```csharp
+// ModType.cs (simplified)
+public abstract class ModType : IModType, ILoadable
+{
+    public Mod Mod { get; internal set; }
+
+    // Defaults to the class name
+    public virtual string Name => GetType().Name;
+
+    // Called once when the content is being loaded
+    public virtual void Load() { }
+
+    // Can be overridden to conditionally skip loading this content
+    public virtual bool IsLoadingEnabled(Mod mod) => true;
+
+    // Called after all content is loaded; set static defaults here
+    public virtual void SetStaticDefaults() { }
+
+    // Called when the mod is unloaded
+    public virtual void Unload() { }
+}
+```
+
+Every concrete subclass of `ModType` — including `ModItem`, `ModNPC`, `ModProjectile`, `ModTile`, `ModBuff`, and many others — is discovered and registered automatically.
+
+## A minimal example
+
+The following item is fully registered by tModLoader without any explicit registration call:
+
+```csharp
+using Terraria;
+using Terraria.ModLoader;
+
+namespace MyMod.Items
+{
+    public class CopperDagger : ModItem
+    {
+        public override void SetDefaults()
+        {
+            Item.damage = 12;
+            Item.DamageType = DamageClass.Melee;
+            Item.width = 28;
+            Item.height = 28;
+            Item.useTime = 20;
+            Item.useAnimation = 20;
+            Item.useStyle = ItemUseStyleID.Swing;
+            Item.value = Item.buyPrice(silver: 2);
+            Item.rare = ItemRarityID.Blue;
+        }
+    }
+}
+```
+
+There is no `mod.AddContent(new CopperDagger())` call anywhere. tModLoader finds the class, creates an instance, and registers it.
+
+## Content naming
+
+The internal name assigned to a piece of content defaults to the class name:
+
+```csharp
+public virtual string Name => GetType().Name;
+```
+
+So `CopperDagger` becomes `"CopperDagger"`, and you reference it via `ModContent.ItemType<CopperDagger>()` or `ModContent.Find<ModItem>("MyMod", "CopperDagger")`.
+
+<Tip>
+  The texture path for a `ModItem` follows the same convention. tModLoader expects a texture at a path derived from the fully-qualified class name with dots replaced by slashes. For `MyMod.Items.CopperDagger`, place the texture at `MyMod/Items/CopperDagger.png` inside your mod's source folder.
+</Tip>
+
+## Controlling which content loads
+
+### Disabling autoloading entirely
+
+Set `ContentAutoloadingEnabled` to `false` on your `Mod` class to opt out of autoloading. You are then responsible for calling `AddContent()` yourself inside `Mod.Load()`.
+
+```csharp
+public class MyMod : Mod
+{
+    // Disable automatic content discovery
+    public bool ContentAutoloadingEnabled { get; init; } = false;
+
+    public override void Load()
+    {
+        AddContent<CopperDagger>();
+        AddContent<SilverSword>();
+    }
+}
+```
+
+### Conditionally skipping individual content
+
+Override `IsLoadingEnabled()` on a `ModType` subclass to skip loading based on runtime conditions such as a config flag:
+
+```csharp
+public class CopperDagger : ModItem
+{
+    public override bool IsLoadingEnabled(Mod mod)
+    {
+        // Only load this item if the config says so
+        return MyModConfig.Instance.EnableCopperDagger;
+    }
+
+    public override void SetDefaults() { /* ... */ }
+}
+```
+
+When `IsLoadingEnabled()` returns `false`, `Mod.AddContent()` returns `false` and the content is never registered. It will not appear in the game and will have no type ID.
+
+## The IAutoload interface
+
+For advanced scenarios, types can implement `IAutoload<TImpl>` to hook into the autoloading pipeline with custom static logic:
+
+```csharp
+// IAutoload.cs
+public interface IAutoload<TImpl> where TImpl : IAutoloader
+{
+}
+
+public interface IAutoloader
+{
+    public static abstract void Autoload(Mod mod, Type type);
+}
+```
+
+When tModLoader encounters a type that implements `IAutoload<TImpl>`, it calls `TImpl.Autoload(mod, type)`. This is used internally by tModLoader itself for things like `GlobalItem` and other global hooks; most mods never need to implement this directly.
+
+## Other autoloaded asset types
+
+Beyond `ModType`, tModLoader also autoloads several asset categories based on folder conventions:
+
+| Flag | Default | What it autoloads |
+|---|---|---|
+| `ContentAutoloadingEnabled` | `true` | All `ModType` subclasses |
+| `GoreAutoloadingEnabled` | `true` | Images in the `Gores/` folder |
+| `BackgroundAutoloadingEnabled` | `true` | Images in the `Backgrounds/` folder |
+| `MusicAutoloadingEnabled` | `true` | Audio files in the `Music/` folder |
+| `CloudAutoloadingEnabled` | `true` | Images in the `Clouds/` folder |
+
+These flags are `init`-only properties on `Mod`, so you set them in your mod class definition, not at runtime.

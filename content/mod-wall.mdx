@@ -1,0 +1,203 @@
+---
+title: "ModWall"
+description: "Creating custom background walls."
+---
+
+`ModWall` is the base class for every wall your mod adds. Walls appear behind tiles in the background layer and can be placed or removed with a hammer. One instance of your class exists per wall type; hooks are called on that shared instance.
+
+<Note>
+  Like tiles, walls automatically drop the item that places them. If there is no such item (for example, an "unsafe" wall variant), call `RegisterItemDrop` in `SetStaticDefaults` to set the drop manually.
+</Note>
+
+## Setting up a wall
+
+Override `SetStaticDefaults()` to configure properties and register a minimap entry.
+
+```csharp
+public class ExampleWall : ModWall
+{
+    public override void SetStaticDefaults() {
+        // Mark as a valid housing wall
+        Main.wallHouse[Type] = true;
+
+        DustType = DustID.Stone;
+
+        // If this mod is removed from a world, replace with DiamondGemspark wall
+        VanillaFallbackOnModDeletion = WallID.DiamondGemspark;
+
+        AddMapEntry(new Color(150, 150, 150));
+    }
+}
+```
+
+### `Main.wallHouse[Type]`
+
+Set this to `true` when the wall should count toward housing requirements. Most craftable walls set this flag; naturally-generated walls (dungeon walls, lihzahrd walls) typically do not.
+
+### `DustType`
+
+The dust ID that appears when the wall is placed or hit. Assign a custom mod dust with `ModContent.DustType<YourDust>()`.
+
+### `VanillaFallbackOnModDeletion`
+
+When your mod is removed from a world, tiles and walls that belong to it are replaced with this vanilla type instead of becoming air. Choose something visually close to your wall.
+
+## Registering an item drop
+
+If you have a "safe" and "unsafe" variant of the same wall, the unsafe wall should drop the safe item:
+
+```csharp
+public class ExampleWallUnsafe : ModWall
+{
+    public override void SetStaticDefaults() {
+        Main.wallHouse[Type] = false;
+        // Drop the safe wall item even though this wall has no placing item
+        RegisterItemDrop(ModContent.ItemType<Items.Placeable.ExampleWallItem>());
+        AddMapEntry(new Color(120, 120, 120));
+    }
+}
+```
+
+## Key hooks
+
+### `KillWall`
+
+Called when the player hits the wall with a hammer. Set `fail = true` to prevent the wall from being removed.
+
+```csharp
+public override void KillWall(int i, int j, ref bool fail) {
+    // Prevent destruction unless a condition is met
+    if (!Main.hardMode) {
+        fail = true;
+    }
+}
+```
+
+### `Drop`
+
+Controls which item drops when the wall is removed. The `type` parameter is already pre-populated with the automatic drop item. Modify it or return `false` to suppress all drops.
+
+```csharp
+public override bool Drop(int i, int j, ref int type) {
+    // Conditionally change the drop
+    if (Main.hardMode) {
+        type = ModContent.ItemType<HardmodeWallItem>();
+    }
+    return true; // return false to drop nothing
+}
+```
+
+### `AnimateWall`
+
+Cycles animation frames for all walls of this type. Walls render every 4 game frames.
+
+```csharp
+public override void AnimateWall(ref byte frame, ref byte frameCounter) {
+    // Alternate between 2 frames, switching every 5 game frames
+    if (++frameCounter >= 5) {
+        frameCounter = 0;
+        frame = (byte)(++frame % 2);
+    }
+}
+```
+
+### `WallFrame`
+
+Called when the wall is placed or a neighboring wall changes. Override to customise how the wall blends with its neighbors. Return `false` to skip vanilla framing and apply your own `Tile.WallFrameX/Y` values directly.
+
+```csharp
+public override bool WallFrame(int i, int j, bool randomizeFrame,
+    ref int style, ref int frameNumber)
+{
+    if (randomizeFrame && frameNumber == 0 && WorldGen.genRand.NextBool(3, 4)) {
+        // Reduce the chance of spawning the special frame 0 variant
+        frameNumber = WorldGen.genRand.Next(1, 3);
+    }
+    return base.WallFrame(i, j, randomizeFrame, ref style, ref frameNumber);
+}
+```
+
+### `ModifyLight`
+
+Emits colored light from the wall. Only useful for walls that act as a light source (rare).
+
+```csharp
+public override void ModifyLight(int i, int j, ref float r, ref float g, ref float b) {
+    if (!Main.dayTime) {
+        r = 0.1f; g = 0.5f; b = 0f;
+    }
+}
+```
+
+### `CanBeTeleportedTo`
+
+Controls whether the player can teleport to a location backed by this wall. Use it to restrict teleportation the same way dungeon and lihzahrd walls do.
+
+```csharp
+public override bool CanBeTeleportedTo(int i, int j, Player player, string context) {
+    return DownedBossSystem.downedMinionBoss;
+}
+```
+
+## Complete example — `ExampleWallAdvanced`
+
+The following is taken directly from `ExampleMod/Content/Walls/ExampleWallAdvanced.cs`.
+
+```csharp
+public class ExampleWallAdvanced : ModWall
+{
+    public override void SetStaticDefaults() {
+        Main.wallHouse[Type] = true;
+        // Prevent a black seam between this wall and CogWall
+        Main.wallBlend[Type] = WallID.CogWall;
+
+        DustType = DustID.Stone;
+        AddMapEntry(new Color(68, 68, 68));
+    }
+
+    public override bool CreateDust(int i, int j, ref int type) {
+        type = DustType;
+        if (Main.tile[i, j].WallFrameNumber == 0)
+            type = DustID.GemEmerald;
+        return true;
+    }
+
+    public override void NumDust(int i, int j, bool fail, ref int num) {
+        num = fail ? 3 : 10;
+    }
+
+    public override void AnimateWall(ref byte frame, ref byte frameCounter) {
+        if (++frameCounter >= 5) {
+            frameCounter = 0;
+            frame = (byte)(++frame % 2);
+        }
+    }
+
+    public override void ModifyLight(int i, int j, ref float r, ref float g, ref float b) {
+        if (!Main.dayTime) {
+            r = 0.1f; g = 0.5f; b = 0f;
+        }
+    }
+
+    public override bool WallFrame(int i, int j, bool randomizeFrame,
+        ref int style, ref int frameNumber)
+    {
+        if (randomizeFrame && frameNumber == 0 && WorldGen.genRand.NextBool(3, 4)) {
+            frameNumber = WorldGen.genRand.Next(1, 3);
+        }
+        return base.WallFrame(i, j, randomizeFrame, ref style, ref frameNumber);
+    }
+
+    public override bool CanBeTeleportedTo(int i, int j, Player player, string context) {
+        return DownedBossSystem.downedMinionBoss;
+    }
+}
+```
+
+## Associating a wall with a tile
+
+When players place a tile in front of a background wall, or use biome conversion, Terraria pairs tiles and walls by their IDs. You can declare these relationships with `TileID.Sets` and `WallID.Sets` entries, or by using `ExampleVanillaConversionWalls` patterns to hook into conversion events via `OnWallConverted`.
+
+<Tip>
+  Use `Main.wallBlend[Type] = WallID.SomeWall` to avoid the black border that appears between two visually similar walls. Set the value to the wall type yours should blend with.
+</Tip>

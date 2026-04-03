@@ -1,0 +1,119 @@
+{
+  "projectType": "framework",
+  "projectName": "tModLoader",
+  "projectDescription": "A Terraria modding framework that lets developers create and players install mods through a rich C# API with hooks, custom content types, and Steam Workshop integration.",
+  "theme": "maple",
+  "primaryColor": "#849890",
+  "lightColor": "#345454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Getting Started",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "introduction",
+              "getting-started/players",
+              "getting-started/developers"
+            ]
+          },
+          {
+            "group": "Your First Mod",
+            "pages": [
+              "guides/first-mod",
+              "guides/mod-structure",
+              "guides/building-and-testing"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "guides/mod-class",
+              "guides/autoloading",
+              "guides/localization",
+              "guides/mod-config"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Content Types",
+        "groups": [
+          {
+            "group": "Entities",
+            "pages": [
+              "content/mod-item",
+              "content/mod-npc",
+              "content/mod-projectile",
+              "content/mod-player"
+            ]
+          },
+          {
+            "group": "World & Environment",
+            "pages": [
+              "content/mod-tile",
+              "content/mod-wall",
+              "content/mod-biome",
+              "content/mod-system"
+            ]
+          },
+          {
+            "group": "Global Hooks",
+            "pages": [
+              "content/global-item",
+              "content/global-npc",
+              "content/global-projectile",
+              "content/global-tile"
+            ]
+          },
+          {
+            "group": "Advanced Content",
+            "pages": [
+              "content/mod-buff",
+              "content/mod-dust",
+              "content/recipes",
+              "content/networking"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Mod lifecycle hooks via abstract Mod class (Load, Unload, etc.)",
+    "Rich set of extendable content types: ModItem, ModNPC, ModPlayer, ModProjectile, ModTile, ModBiome, and more",
+    "Global hook classes (GlobalItem, GlobalNPC, etc.) to modify all instances of a content type",
+    "ModSystem for general world/game hooks without tying to a specific entity",
+    "ModConfig system with client/server scoping and automatic UI generation",
+    "Built-in networking via ModPacket",
+    "Automatic content registration and autoloading by class discovery",
+    "Localization support with HJSON files",
+    "Steam Workshop integration for publishing and downloading mods",
+    "ExampleMod reference implementation covering all major content types"
+  ],
+  "publicApiSurface": [
+    "Mod (abstract base class for all mods)",
+    "ModItem (custom items)",
+    "ModNPC (custom NPCs and bosses)",
+    "ModPlayer (player data and hooks)",
+    "ModProjectile (custom projectiles)",
+    "ModTile (custom tiles)",
+    "ModWall (custom walls)",
+    "ModBiome (custom biomes with scene effects)",
+    "ModSystem (general mod hooks and world generation)",
+    "ModBuff (custom buffs/debuffs)",
+    "ModDust (custom visual dust particles)",
+    "ModMount (custom mounts)",
+    "ModPrefix (custom item prefixes)",
+    "ModRarity (custom item rarities)",
+    "ModCommand (in-game chat commands)",
+    "ModConfig (client/server config with UI)",
+    "ModKeybind (custom keyboard shortcuts)",
+    "GlobalItem / GlobalNPC / GlobalProjectile / GlobalTile / GlobalWall (universal hooks)",
+    "ModContent.GetInstance<T>() / Find<T>() / TryFind<T>() (content lookup)",
+    "ModPacket (multiplayer networking)",
+    "ModNet (network synchronization utilities)"
+  ]
+}

@@ -1,0 +1,134 @@
+---
+title: "Building and testing"
+description: "How to build, reload, and test your mod during development, including log locations, error handling, and quick debugging techniques."
+---
+
+tModLoader provides an in-game build system so you can compile and reload your mod without leaving Terraria. This page explains the full development loop from first build to diagnosing runtime errors.
+
+---
+
+## Building in-game
+
+Open tModLoader and navigate to **Workshop → Develop Mods**. Every folder in your `ModSources/` directory appears as an entry in this list.
+
+You have two build actions:
+
+| Button | What it does |
+|--------|-------------|
+| **Build** | Compiles your mod into a `.tmod` file. Does not reload the game. |
+| **Build + Reload** | Compiles your mod, then restarts the mod loading sequence with all currently enabled mods. |
+
+Use **Build** when you want to check that your code compiles without interrupting a play session. Use **Build + Reload** when you are ready to test your changes in-game.
+
+<Note>
+  **Build + Reload** reloads all enabled mods, not just yours. On large mod lists this can take several seconds.
+</Note>
+
+---
+
+## The reload hotkey
+
+While in-game you can trigger a full **Build + Reload** from the keyboard without opening any menu. The default hotkey is **F10**.
+
+You can rebind it in **Settings → Controls → Mod Controls**.
+
+<Tip>
+  Bind the reload hotkey to something easy to reach. Hitting it frequently — after every small change — is the fastest way to iterate.
+</Tip>
+
+---
+
+## Viewing logs
+
+tModLoader writes detailed logs to the `Logs/` folder inside your Terraria save directory.
+
+| OS | Log location |
+|----|-------------|
+| Windows | `%USERPROFILE%\Documents\My Games\Terraria\tModLoader\Logs\` |
+| macOS | `~/Library/Application Support/Terraria/tModLoader/Logs/` |
+| Linux | `~/.local/share/Terraria/tModLoader/Logs/` |
+
+| File | Contents |
+|------|----------|
+| `client.log` | Everything logged by the client, including compiler errors, load errors, and `Mod.Logger` output |
+| `server.log` | The equivalent log for dedicated server sessions |
+
+The logs are plain text and reset each session. Open `client.log` in any text editor or tail it in a terminal to watch output in real time.
+
+```bash
+# Follow the log in real time on Linux/macOS
+tail -f ~/.local/share/Terraria/tModLoader/Logs/client.log
+```
+
+---
+
+## Error handling
+
+### Compiler errors
+
+If your code does not compile, tModLoader displays an error dialog listing each compiler message. The full output — including file names and line numbers — is written to `client.log`.
+
+Fix the reported errors in your editor, then rebuild.
+
+### Runtime errors (load-time exceptions)
+
+If your mod throws an unhandled exception during `Load()` or while registering content, tModLoader catches it and marks your mod as failed. The error appears in the mod list with a red indicator, and the full stack trace is in `client.log`.
+
+Other mods that do not depend on yours continue to load normally.
+
+### Runtime errors (in-game exceptions)
+
+Exceptions thrown during gameplay (e.g. in an `Update()` hook) are caught by tModLoader's error handling layer. They are written to `client.log` and may display a brief on-screen notification. The game continues running unless the exception is unrecoverable.
+
+<Warning>
+  Unhandled exceptions in `ModSystem.PostUpdateEverything` or similar high-frequency hooks can produce thousands of log lines per second and make the log file very large. If `client.log` grows unexpectedly, search it for a repeated exception.
+</Warning>
+
+---
+
+## Enabling and disabling mods
+
+Open **Workshop → Manage Mods** to see all installed mods. Click the toggle next to any mod to enable or disable it. Changes take effect after the next reload.
+
+You can also use this menu to:
+
+- Check each mod's version and the tModLoader version it was built against.
+- Open a mod's homepage or Workshop page.
+- View whether a mod is loaded client-side only, server-side only, or both.
+
+---
+
+## Quick debug output
+
+During development, `Main.NewText()` is the fastest way to print values to the in-game chat. It requires no setup and works from any hook that runs on the client.
+
+```csharp
+using Terraria;
+
+// Print a message in the in-game chat (client only)
+Main.NewText($"Player HP: {Main.LocalPlayer.statLife}");
+
+// Print with a custom color
+Main.NewText("Something happened!", Microsoft.Xna.Framework.Color.Yellow);
+```
+
+For structured, persistent logging use your mod's built-in `Logger` property, which writes to `client.log`:
+
+```csharp
+using Terraria.ModLoader;
+
+public class MyMod : Mod
+{
+    public override void Load()
+    {
+        Logger.Info("MyMod loaded successfully.");
+        Logger.Warn("This is a warning.");
+    }
+}
+```
+
+`Logger` is a `log4net.ILog` instance. Use `Info`, `Warn`, `Error`, and `Debug` as appropriate. Debug-level messages are suppressed in release builds unless verbose logging is enabled.
+
+<Tip>
+  Use `Main.NewText()` for values you want to inspect quickly during a play session, and `Logger` for anything you want to capture in the log file for later review.
+</Tip>

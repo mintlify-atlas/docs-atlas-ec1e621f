@@ -1,0 +1,188 @@
+---
+title: "Localization"
+description: Adding multi-language text support to your mod.
+---
+
+tModLoader uses HJSON files to store all user-facing text in your mod. By separating strings from code, you make it possible for the community to translate your mod into any of the languages Terraria supports without touching your C# source.
+
+## Supported languages
+
+Terraria and tModLoader support the following language codes:
+
+| Code | Language |
+|---|---|
+| `en-US` | English |
+| `de-DE` | German |
+| `it-IT` | Italian |
+| `fr-FR` | French |
+| `es-ES` | Spanish |
+| `ru-RU` | Russian |
+| `zh-Hans` | Chinese (Simplified) |
+| `pt-BR` | Portuguese (Brazil) |
+| `pl-PL` | Polish |
+
+## File layout
+
+Place your HJSON files in a `Localization/` folder inside your mod's source directory. Use one file per language, named after the language code:
+
+```text
+MyMod/
+├── Localization/
+│   ├── en-US.hjson
+│   ├── de-DE.hjson
+│   └── zh-Hans.hjson
+├── Items/
+│   └── CopperDagger.cs
+└── MyMod.cs
+```
+
+<Note>
+  You only need `en-US.hjson` to get started. tModLoader will automatically generate stub entries for new content in your localization files after you build and reload the mod. You can then fill them in, or share the generated stubs with translators.
+</Note>
+
+## HJSON structure
+
+All keys for a given mod live under `Mods.{ModName}`. Content keys follow the pattern `{Category}.{ContentName}.{DataName}`.
+
+```text
+Mods: {
+    MyMod: {
+        Items: {
+            CopperDagger: {
+                DisplayName: Copper Dagger
+                Tooltip: A lightweight dagger forged from copper.
+            }
+
+            IronSword: {
+                DisplayName: Iron Sword
+                Tooltip:
+                    '''
+                    A sturdy sword.
+                    Deals bonus damage against slimes.
+                    '''
+            }
+        }
+
+        NPCs: {
+            ForestGuardian: {
+                DisplayName: Forest Guardian
+            }
+        }
+
+        Buffs: {
+            SwiftnessBuff: {
+                DisplayName: Swiftness
+                Description: Movement speed is increased.
+            }
+        }
+    }
+}
+```
+
+Multi-line tooltips use triple-quoted strings (`'''`). Each line in the block becomes a separate tooltip line in-game.
+
+## Standard localization keys by content type
+
+The following keys are used by tModLoader automatically for common content types. You do not need to call anything in code — just provide the HJSON entry.
+
+| Content type | Keys |
+|---|---|
+| `ModItem` | `DisplayName`, `Tooltip` |
+| `ModNPC` | `DisplayName` |
+| `ModBuff` | `DisplayName`, `Description` |
+| `ModProjectile` | `DisplayName` |
+| `ModPrefix` | `DisplayName` |
+| `ModBiome` | `DisplayName` |
+
+## How ModItem uses localization
+
+`ModItem` (and other `ModType` subclasses that implement `ILocalizedModType`) automatically generate localization keys from the content's category and name. The `ILocalizedModType` interface requires a `LocalizationCategory` property:
+
+```csharp
+// ILocalizedModType.cs
+public interface ILocalizedModType : IModType
+{
+    public abstract string LocalizationCategory { get; }
+}
+```
+
+For `ModItem`, `LocalizationCategory` is `"Items"`. Combined with the class name, tModLoader constructs the key `Mods.MyMod.Items.CopperDagger.DisplayName` and resolves it at runtime.
+
+You can call `this.GetLocalization(suffix)` from any `ILocalizedModType` to look up a key under the same prefix:
+
+```csharp
+// Returns the LocalizedText for "Mods.MyMod.Items.CopperDagger.DisplayName"
+LocalizedText name = this.GetLocalization("DisplayName");
+```
+
+## Accessing localization text in code
+
+Use `Language.GetText()` to retrieve a `LocalizedText` handle, or `Language.GetTextValue()` to get the resolved string directly for the active language.
+
+```csharp
+using Terraria.Localization;
+
+// Get a LocalizedText handle (evaluated lazily on access)
+LocalizedText text = Language.GetText("Mods.MyMod.SomeKey");
+string value = text.Value;
+
+// Get the resolved string immediately
+string greeting = Language.GetTextValue("Mods.MyMod.Greeting");
+```
+
+For keys that belong to your mod specifically, prefer `Mod.GetLocalization()`:
+
+```csharp
+// Inside your Mod class or a ModType:
+LocalizedText text = Mod.GetLocalization("SomeCustomKey", () => "Default value");
+```
+
+The factory lambda `() => "Default value"` is used to populate the HJSON stub if the key does not yet exist. This ensures new keys appear in the generated localization files automatically.
+
+## Custom localization keys
+
+You can define arbitrary keys under your mod's namespace for UI text, chat messages, or any other string. Register them during loading by calling `Mod.GetLocalization()` or `Language.GetOrRegister()`:
+
+```csharp
+public override void Load()
+{
+    // Registers "Mods.MyMod.UI.WelcomeMessage" and generates a stub if absent
+    LocalizedText welcome = Mod.GetLocalization("UI.WelcomeMessage", () => "Welcome to MyMod!");
+}
+```
+
+In your HJSON file:
+
+```text
+Mods: {
+    MyMod: {
+        UI: {
+            WelcomeMessage: Welcome to MyMod!
+        }
+    }
+}
+```
+
+## String substitutions and references
+
+HJSON values can reference other translation keys using `{$Key}` syntax. tModLoader resolves these at runtime:
+
+```text
+Items: {
+    MyItem: {
+        # References a vanilla tooltip key
+        Tooltip: "{$ItemTooltip.HiveBackpack}"
+    }
+
+    AnotherItem: {
+        # References a key within the same mod (scope-simplified)
+        Tooltip: "Uses {$Items.MyItem.DisplayName} as material"
+    }
+}
+```
+
+## Localization for configs
+
+`ModConfig` also implements `ILocalizedModType` with `LocalizationCategory` set to `"Configs"`. Labels and tooltips for config fields follow the same pattern: `Mods.{ModName}.Configs.{ConfigName}.{FieldName}.Label`.
+
+See [Mod Configuration](/guides/mod-config) for details.

@@ -1,0 +1,278 @@
+---
+title: "GlobalItem"
+description: "Modify and intercept all items — both vanilla and modded — from a single class."
+---
+
+`GlobalItem` lets you hook into the behavior of every item in the game. Unlike `ModItem`, which scopes logic to a single custom item, a `GlobalItem` subclass runs its hooks for **all** items — including every vanilla item — unless you restrict it with `AppliesToEntity`.
+
+<Note>
+  Use `GlobalItem` when you need to change how a category of existing items behaves. Use `ModItem` when you are creating a brand-new item.
+</Note>
+
+## Global vs. mod-specific
+
+| | `GlobalItem` | `ModItem` |
+|---|---|---|
+| Applies to | Every item in the game | Only the one item you define |
+| Primary use | Cross-cutting changes, stat tweaks, new tooltips | New items with custom behavior |
+| Instance per item | Optional (`InstancePerEntity`) | Always a dedicated instance |
+
+Both types can coexist in a single mod. A common pattern is to add a new weapon with `ModItem` and then buff an entire weapon class (for example, all swords) using `GlobalItem`.
+
+## Basic usage
+
+Create a class that inherits from `GlobalItem`. tModLoader registers it automatically at load time.
+
+```csharp
+using Terraria;
+using Terraria.ModLoader;
+
+public class MyGlobalItem : GlobalItem
+{
+    // Hooks go here
+}
+```
+
+## Targeting specific items
+
+Every hook receives the item instance, so you can guard with a type check:
+
+```csharp
+public override void SetDefaults(Item item)
+{
+    if (item.type == ItemID.CopperShortsword)
+        item.damage = 50;
+}
+```
+
+For a cleaner approach, override `AppliesToEntity` to tell tModLoader to skip your instance entirely for items you do not care about:
+
+```csharp
+public override bool AppliesToEntity(Item entity, bool lateInstantiation)
+{
+    // Only run this global for weapons
+    return lateInstantiation && entity.damage > 0;
+}
+```
+
+<Tip>
+  Use `lateInstantiation && ...` when your condition depends on values set during `SetDefaults`, such as `damage`, `useStyle`, or `ammo`.
+</Tip>
+
+## Storing per-item state
+
+By default a `GlobalItem` is a singleton. To store data on individual item instances, set `InstancePerEntity` to `true` and add instance fields:
+
+```csharp
+public class WeaponExperienceGlobal : GlobalItem
+{
+    public override bool InstancePerEntity => true;
+
+    public int experience;
+}
+```
+
+With `InstancePerEntity` enabled you can retrieve the instance for a specific item with `item.GetGlobalItem<WeaponExperienceGlobal>()`.
+
+---
+
+## Key hooks
+
+### `SetDefaults`
+
+Called immediately after an item's default stats are set. Use this to change any property on all items, or items matched by a type check.
+
+```csharp
+public override void SetDefaults(Item item)
+{
+    // Double the knockback of all bows
+    if (item.useAmmo == AmmoID.Arrow)
+        item.knockBack *= 2f;
+}
+```
+
+### `OnCreated`
+
+Called when an item is created, with a context object that describes how it was made (crafted, bought, looted from a bag, etc.).
+
+```csharp
+public override void OnCreated(Item item, ItemCreationContext context)
+{
+    if (context is RecipeItemCreationContext rContext)
+    {
+        // Inspect consumed ingredients here
+    }
+}
+```
+
+### `CanUseItem`
+
+Return `false` to prevent any item from being used. Returning `true` (the default) does not guarantee the item can be used — other checks may still block it.
+
+```csharp
+public override bool CanUseItem(Item item, Player player)
+{
+    // Prevent using weapons underground
+    if (item.damage > 0 && player.position.Y > Main.worldSurface * 16)
+        return false;
+
+    return true;
+}
+```
+
+### `UseItem`
+
+Called while an item is being used each tick. Return `true` to force `itemTime` to tick, `false` to keep it at 0, or `null` for vanilla behavior.
+
+```csharp
+public override bool? UseItem(Item item, Player player) => null;
+```
+
+### `ModifyTooltips`
+
+Add, remove, or reorder tooltip lines for any item.
+
+```csharp
+public override void ModifyTooltips(Item item, List<TooltipLine> tooltips)
+{
+    if (item.type == ItemID.Gel)
+    {
+        tooltips.Add(new TooltipLine(Mod, "GelNote", "Shift-click for a special effect"));
+    }
+}
+```
+
+### `CanPickup` / `OnPickup`
+
+Control whether and what happens when a player picks up an item from the world.
+
+```csharp
+// Prevent picking up gel when the player's inventory is full
+public override bool CanPickup(Item item, Player player)
+{
+    return item.type != ItemID.Gel || player.HasItemInInventoryBasic(ItemID.Gel) < 999;
+}
+
+// Run logic immediately after pickup; return false to skip adding to inventory
+public override bool OnPickup(Item item, Player player)
+{
+    return true;
+}
+```
+
+### `ModifyWeaponDamage`
+
+Modify a weapon's effective damage using a `StatModifier`, which separates flat and multiplicative bonuses.
+
+```csharp
+public override void ModifyWeaponDamage(Item item, Player player, ref StatModifier damage)
+{
+    // Add 10% multiplicative damage to all weapons
+    damage *= 1.10f;
+}
+```
+
+### `ModifyWeaponKnockback`
+
+The knockback equivalent of `ModifyWeaponDamage`.
+
+```csharp
+public override void ModifyWeaponKnockback(Item item, Player player, ref StatModifier knockback)
+{
+    knockback *= 1.25f;
+}
+```
+
+### `SaveData` / `LoadData`
+
+Persist custom data on an item across save/load cycles. Both methods must be overridden together.
+
+```csharp
+public override void SaveData(Item item, TagCompound tag)
+{
+    tag["experience"] = experience;
+}
+
+public override void LoadData(Item item, TagCompound tag)
+{
+    experience = tag.Get<int>("experience");
+}
+```
+
+<Warning>
+  `SaveData` and `LoadData` must always be overridden as a pair. Overriding only one will cause a load-time error.
+</Warning>
+
+### `NetSend` / `NetReceive`
+
+Synchronize custom item data across multiplayer. Like `SaveData`/`LoadData`, these must be overridden together.
+
+```csharp
+public override void NetSend(Item item, BinaryWriter writer)
+{
+    writer.Write(experience);
+}
+
+public override void NetReceive(Item item, BinaryReader reader)
+{
+    experience = reader.ReadInt32();
+}
+```
+
+---
+
+## Example: weapon that levels up
+
+The following example from ExampleMod tracks experience on all weapons and scales damage based on level. It uses `InstancePerEntity`, `AppliesToEntity`, `ModifyWeaponDamage`, `ModifyTooltips`, `SaveData`/`LoadData`, and `NetSend`/`NetReceive`.
+
+```csharp
+public class WeaponWithGrowingDamage : GlobalItem
+{
+    public int experience;
+    public static int experiencePerLevel = 100;
+    public int level => experience / experiencePerLevel;
+
+    public override bool InstancePerEntity => true;
+
+    // Only applies to items that deal damage
+    public override bool AppliesToEntity(Item entity, bool lateInstantiation)
+        => lateInstantiation && entity.damage > 0;
+
+    public override void ModifyWeaponDamage(Item item, Player player, ref StatModifier damage)
+    {
+        // +1% multiplicative damage per level
+        damage *= 1f + (float)level / 100f;
+    }
+
+    public override void ModifyTooltips(Item item, List<TooltipLine> tooltips)
+    {
+        if (experience > 0)
+        {
+            tooltips.Add(new TooltipLine(Mod, "level", $"Level: {level}"));
+            int toNext = (level + 1) * experiencePerLevel - experience;
+            tooltips.Add(new TooltipLine(Mod, "experience", $"XP to next level: {toNext}"));
+        }
+    }
+
+    public override void OnHitNPC(Item item, Player player, NPC target, NPC.HitInfo hit, int damageDone)
+    {
+        experience += hit.Damage;
+    }
+
+    public override void SaveData(Item item, TagCompound tag)
+        => tag["experience"] = experience;
+
+    public override void LoadData(Item item, TagCompound tag)
+        => experience = tag.Get<int>("experience");
+
+    public override void NetSend(Item item, BinaryWriter writer)
+        => writer.Write(experience);
+
+    public override void NetReceive(Item item, BinaryReader reader)
+        => experience = reader.ReadInt32();
+}
+```
+
+<Tip>
+  The full source for this example is at `ExampleMod/Common/GlobalItems/WeaponWithGrowingDamage.cs`.
+</Tip>

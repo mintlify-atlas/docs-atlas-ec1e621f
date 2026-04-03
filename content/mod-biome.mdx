@@ -1,0 +1,185 @@
+---
+title: "ModBiome"
+description: "Creating custom biomes with unique music, sky, and environment."
+---
+
+`ModBiome` is the base class for adding a named biome to your mod. It centralises biome-related concerns — music, backgrounds, water style, bestiary display, torch replacement, and multiplayer syncing — into one class.
+
+`ModBiome` extends `ModSceneEffect`, which provides the visual-layer properties (`WaterStyle`, `SurfaceBackgroundStyle`, `UndergroundBackgroundStyle`, `MapBackground`). You do not need to override `IsSceneEffectActive`; it is sealed and automatically forwards to your `IsBiomeActive` result.
+
+<Note>
+  To check whether the local player is inside your biome from other code, use `player.InModBiome<YourBiome>()`. Do not read the `IsBiomeActive` result directly from outside the class.
+</Note>
+
+## Determining when the biome is active
+
+`IsBiomeActive` is called every update for each player. Return `true` when that player should be considered inside the biome.
+
+```csharp
+public override bool IsBiomeActive(Player player) {
+    // Require at least 40 ExampleBlocks nearby
+    bool enoughTiles = ModContent.GetInstance<ExampleBiomeTileCount>().exampleBlockCount >= 40;
+    // Restrict to the surface layer
+    bool correctHeight = player.ZoneSkyHeight || player.ZoneOverworldHeight;
+    return enoughTiles && correctHeight;
+}
+```
+
+Use `ModSystem.TileCountsAvailable` to efficiently count nearby tiles. That hook receives a span indexed by tile type, so you can store the count in a field and read it here.
+
+## Music
+
+Override the `Music` property to return a music slot. Use `MusicLoader.GetMusicSlot` to load a custom track from your mod's assets, or `MusicID.*` for a vanilla track. Return `0` for silence, or `-1` to let lower-priority scene effects determine the music.
+
+```csharp
+public override int Music => MusicLoader.GetMusicSlot(Mod, "Assets/Music/MysteriousMystery");
+```
+
+For conditional music (e.g. alternate Otherworld soundtrack support):
+
+```csharp
+public override int Music {
+    get {
+        if (!Main.swapMusic) {
+            return MusicID.OtherworldlyEerie;
+        }
+        return MusicLoader.GetMusicSlot(Mod, "Assets/Music/MysteriousMystery");
+    }
+}
+```
+
+## Priority
+
+`Priority` controls how your biome competes with vanilla biomes and other mods for control of scene effects (music, sky, water). Use the `SceneEffectPriority` enum.
+
+```csharp
+public override SceneEffectPriority Priority => SceneEffectPriority.BiomeLow;
+```
+
+The enum values in ascending order of precedence are: `None`, `BiomeLow`, `BiomeMedium`, `BiomeHigh`, `Environment`. Use the lowest priority that makes your biome behave correctly.
+
+<Warning>
+  Avoid using `BiomeHigh` unless your biome genuinely must override most others. Picking too high a priority will suppress vanilla biome music and effects in unintended situations.
+</Warning>
+
+## Background and water style
+
+Override properties inherited from `ModSceneEffect` to replace the sky, underground backdrop, water appearance, and map background.
+
+```csharp
+// Surface sky background
+public override ModSurfaceBackgroundStyle SurfaceBackgroundStyle
+    => ModContent.GetInstance<ExampleSurfaceBackgroundStyle>();
+
+// Underground backdrop
+public override ModUndergroundBackgroundStyle UndergroundBackgroundStyle
+    => ModContent.GetInstance<ExampleUndergroundBackgroundStyle>();
+
+// Water color and ripple style
+public override ModWaterStyle WaterStyle
+    => ModContent.GetInstance<ExampleWaterStyle>();
+
+// Reuse the bestiary background as the fullscreen map background
+public override string MapBackground => BackgroundPath;
+```
+
+## Bestiary display
+
+The bestiary shows a 30×30 icon and a background image for each biome filter. By default, tModLoader derives the texture paths from your class name:
+
+- Icon: `Namespace/ClassName_Icon.png`
+- Background: `Namespace/ClassName_Background.png`
+
+Override `BestiaryIcon` and `BackgroundPath` to point elsewhere:
+
+```csharp
+public override string BestiaryIcon => base.BestiaryIcon;      // default path
+public override string BackgroundPath => base.BackgroundPath;  // default path
+```
+
+The display name shown in the bestiary comes from localization. Add a key under `Mods.YourMod.Biomes.YourBiome.DisplayName` in your localization file.
+
+## Biome torch and campfire replacement
+
+When the player has Torch God's Favour, Terraria replaces generic torches and campfires with biome-specific variants in biome areas. Override these properties to set your custom item types:
+
+```csharp
+public override int BiomeTorchItemType    => ModContent.ItemType<ExampleTorch>();
+public override int BiomeCampfireItemType => ModContent.ItemType<ExampleCampfire>();
+```
+
+## Lifecycle hooks
+
+```csharp
+// Called once when the player enters the biome
+public override void OnEnter(Player player) { }
+
+// Called every tick the player is inside the biome
+public override void OnInBiome(Player player) { }
+
+// Called once when the player leaves the biome
+public override void OnLeave(Player player) { }
+```
+
+## Complete example — `ExampleSurfaceBiome`
+
+The following is taken directly from `ExampleMod/Content/Biomes/ExampleSurfaceBiome.cs`.
+
+```csharp
+public class ExampleSurfaceBiome : ModBiome
+{
+    // Scene effects
+    public override ModWaterStyle WaterStyle
+        => ModContent.GetInstance<ExampleWaterStyle>();
+    public override ModSurfaceBackgroundStyle SurfaceBackgroundStyle
+        => ModContent.GetInstance<ExampleSurfaceBackgroundStyle>();
+    public override CaptureBiome.TileColorStyle TileColorStyle
+        => CaptureBiome.TileColorStyle.Crimson;
+
+    // Music
+    public override int Music
+        => MusicLoader.GetMusicSlot(Mod, "Assets/Music/MysteriousMystery");
+
+    // Torch and campfire replacements
+    public override int BiomeTorchItemType    => ModContent.ItemType<ExampleTorch>();
+    public override int BiomeCampfireItemType => ModContent.ItemType<ExampleCampfire>();
+
+    // Bestiary
+    public override string BestiaryIcon   => base.BestiaryIcon;
+    public override string BackgroundPath => base.BackgroundPath;
+    public override Color? BackgroundColor => base.BackgroundColor;
+    public override string MapBackground  => BackgroundPath;
+
+    // Activation condition
+    public override bool IsBiomeActive(Player player) {
+        bool b1 = ModContent.GetInstance<ExampleBiomeTileCount>().exampleBlockCount >= 40;
+        bool b2 = Math.Abs(player.position.ToTileCoordinates().X - Main.maxTilesX / 2)
+                  < Main.maxTilesX / 6;
+        bool b3 = player.ZoneSkyHeight || player.ZoneOverworldHeight;
+        return b1 && b2 && b3;
+    }
+
+    public override SceneEffectPriority Priority => SceneEffectPriority.BiomeLow;
+}
+```
+
+## Counting biome tiles
+
+Biomes typically activate based on a tile count. The recommended pattern is a companion `ModSystem` that reads tile counts via `TileCountsAvailable` and exposes the result as a public field.
+
+```csharp
+public class ExampleBiomeTileCount : ModSystem
+{
+    public int exampleBlockCount;
+
+    public override void TileCountsAvailable(ReadOnlySpan<int> tileCounts) {
+        exampleBlockCount = tileCounts[ModContent.TileType<ExampleBlock>()];
+    }
+}
+```
+
+Then read `ModContent.GetInstance<ExampleBiomeTileCount>().exampleBlockCount` inside `IsBiomeActive`.
+
+<Tip>
+  `TileCountsAvailable` is called on the client every frame. The counts reflect tiles within the vanilla biome scanning range around the player — roughly 85 tiles horizontally and 62 tiles vertically.
+</Tip>

@@ -1,0 +1,447 @@
+---
+title: "ModNPC"
+description: Creating custom enemies, bosses, and town NPCs
+---
+
+`ModNPC` is the base class for every custom NPC in your mod — regular enemies, bosses, critters, and town NPCs alike. Create a class that inherits from `ModNPC` and tModLoader registers it automatically.
+
+```csharp
+using Terraria;
+using Terraria.ID;
+using Terraria.ModLoader;
+
+public class MyEnemy : ModNPC
+{
+    public override void SetDefaults()
+    {
+        // ...
+    }
+}
+```
+
+<Note>
+The `NPC` property gives you direct access to the underlying `NPC` instance controlled by this `ModNPC`.
+</Note>
+
+---
+
+## SetStaticDefaults
+
+Called once during mod loading. Use this to configure frame counts, NPCID sets, debuff immunities, bestiary draw offsets, and NPC happiness preferences.
+
+```csharp
+public override void SetStaticDefaults()
+{
+    Main.npcFrameCount[Type] = 6; // number of animation frames
+
+    // Debuff immunity
+    NPCID.Sets.SpecificDebuffImmunity[Type][BuffID.Poisoned] = true;
+    NPCID.Sets.SpecificDebuffImmunity[Type][BuffID.Confused] = true;
+
+    // Bestiary draw settings
+    NPCID.Sets.NPCBestiaryDrawOffset.Add(Type,
+        new NPCID.Sets.NPCBestiaryDrawModifiers { Velocity = 1f });
+}
+```
+
+For bosses, also set:
+
+```csharp
+NPCID.Sets.MPAllowedEnemies[Type] = true;    // Allow summon items in multiplayer
+NPCID.Sets.BossBestiaryPriority.Add(Type);  // Group with other bosses in the bestiary
+```
+
+---
+
+## SetDefaults
+
+Configure the NPC's core stats.
+
+```csharp
+public override void SetDefaults()
+{
+    NPC.width = 36;          // Hitbox width (pixels)
+    NPC.height = 36;         // Hitbox height (pixels)
+    NPC.damage = 7;
+    NPC.defense = 2;
+    NPC.lifeMax = 25;
+    NPC.HitSound = SoundID.NPCHit1;
+    NPC.DeathSound = SoundID.NPCDeath1;
+    NPC.value = 25f;         // Copper coins dropped
+    NPC.aiStyle = -1;        // -1 = fully custom AI
+    NPC.knockBackResist = 0.5f;
+
+    // Required to give this NPC its own banner
+    Banner = Type;
+    BannerItem = ModContent.ItemType<MyNPCBanner>();
+}
+```
+
+<AccordionGroup>
+  <Accordion title="Common SetDefaults properties">
+
+| Property | Type | Description |
+|---|---|---|
+| `NPC.lifeMax` | `int` | Maximum health |
+| `NPC.damage` | `int` | Contact damage |
+| `NPC.defense` | `int` | Defense value |
+| `NPC.aiStyle` | `int` | Vanilla AI style to copy. `-1` for custom |
+| `NPC.knockBackResist` | `float` | `1f` = normal knockback, `0f` = immune |
+| `NPC.noGravity` | `bool` | Disables gravity |
+| `NPC.noTileCollide` | `bool` | Ignores tile collision |
+| `NPC.boss` | `bool` | Flags as a boss (shows health bar) |
+| `NPC.npcSlots` | `float` | Spawn slots consumed (bosses typically use `10f`) |
+| `NPC.value` | `float` | Coin drop value in copper |
+| `NPC.HitSound` | `SoundStyle` | Sound played when hit |
+| `NPC.DeathSound` | `SoundStyle` | Sound played on death |
+| `Banner` | `int` | Banner ID (set to `Type` for own banner) |
+| `BannerItem` | `int` | Item type that represents the banner |
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Key hooks
+
+### AI
+
+The main behavior loop. Called every tick on the server and all clients. Use the `NPC.ai[]` array (indices 0–3) to store persistent state.
+
+```csharp
+public override void AI()
+{
+    // Always target the closest player first
+    NPC.TargetClosest(faceTarget: true);
+
+    Player target = Main.player[NPC.target];
+    if (!NPC.HasValidTarget) return;
+
+    // Move toward the target
+    Vector2 direction = (target.Center - NPC.Center).SafeNormalize(Vector2.Zero);
+    NPC.velocity = Vector2.Lerp(NPC.velocity, direction * 4f, 0.05f);
+}
+```
+
+<Tip>
+Use properties that wrap `NPC.ai[]` slots to keep your AI code readable:
+
+```csharp
+public ref float AIState => ref NPC.ai[0];
+public ref float AITimer => ref NPC.ai[1];
+```
+</Tip>
+
+### FindFrame
+
+Controls animation by setting `NPC.frame.Y`. Called on server and clients.
+
+```csharp
+public override void FindFrame(int frameHeight)
+{
+    NPC.spriteDirection = NPC.direction;
+
+    NPC.frameCounter++;
+    if (NPC.frameCounter >= 10)
+    {
+        NPC.frameCounter = 0;
+        NPC.frame.Y += frameHeight;
+        if (NPC.frame.Y >= frameHeight * Main.npcFrameCount[Type])
+            NPC.frame.Y = 0;
+    }
+}
+```
+
+### ModifyNPCLoot
+
+Register item drops using the loot rule system. Runs **once** during mod loading, not on each kill.
+
+```csharp
+public override void ModifyNPCLoot(NPCLoot npcLoot)
+{
+    // 1/10 chance to drop a trophy
+    npcLoot.Add(ItemDropRule.Common(ModContent.ItemType<MyTrophy>(), 10));
+
+    // Classic mode drops (not expert)
+    LeadingConditionRule notExpert = new LeadingConditionRule(new Conditions.NotExpert());
+    notExpert.OnSuccess(ItemDropRule.Common(ModContent.ItemType<MyMask>(), 7));
+    npcLoot.Add(notExpert);
+
+    // Expert treasure bag
+    npcLoot.Add(ItemDropRule.BossBag(ModContent.ItemType<MyBossBag>()));
+
+    // Master mode relic and pet
+    npcLoot.Add(ItemDropRule.MasterModeCommonDrop(ModContent.ItemType<MyRelic>()));
+    npcLoot.Add(ItemDropRule.MasterModeDropOnAllPlayers(ModContent.ItemType<MyPetItem>(), 4));
+}
+```
+
+### OnKill
+
+Runs when the NPC dies. Use this for world events, setting defeat flags, and spawning world objects. Item drops belong in `ModifyNPCLoot`, not here.
+
+```csharp
+public override void OnKill()
+{
+    // Mark boss as defeated in a ModSystem
+    DownedBossSystem.downedMyBoss = true;
+    // Optionally spawn ore or run worldgen
+}
+```
+
+### HitEffect
+
+Runs on all clients when the NPC takes damage. Use this for client-side effects like dust and gore. Check `NPC.life <= 0` for death effects.
+
+```csharp
+public override void HitEffect(NPC.HitInfo hit)
+{
+    if (NPC.life <= 0)
+    {
+        // Spawn gore on death
+        for (int i = 0; i < 3; i++)
+            Gore.NewGore(NPC.GetSource_Death(), NPC.position, NPC.velocity, GoreID.Smoke1);
+    }
+    else
+    {
+        Dust.NewDust(NPC.position, NPC.width, NPC.height, DustID.Blood);
+    }
+}
+```
+
+### BossHeadSlot
+
+Swap the boss head icon on the minimap based on NPC state (useful for multi-phase bosses).
+
+```csharp
+public override void BossHeadSlot(ref int index)
+{
+    if (SecondStage && secondStageHeadSlot != -1)
+        index = secondStageHeadSlot;
+}
+```
+
+### BossHeadRotation
+
+Rotates the boss head icon on the map to match the NPC's facing direction.
+
+```csharp
+public override void BossHeadRotation(ref float rotation)
+{
+    rotation = NPC.rotation;
+}
+```
+
+### ApplyDifficultyAndPlayerScaling
+
+Scale boss stats for Expert/Master mode and for multiple players.
+
+```csharp
+public override void ApplyDifficultyAndPlayerScaling(
+    int numPlayers, float balance, float bossAdjustment)
+{
+    NPC.lifeMax = (int)(NPC.lifeMax * balance * bossAdjustment);
+    NPC.damage = (int)(NPC.damage * 0.6f);
+}
+```
+
+---
+
+## Town NPCs
+
+Town NPCs require `[AutoloadHead]` and `NPC.townNPC = true` in `SetDefaults`.
+
+```csharp
+[AutoloadHead]
+public class MyTownNPC : ModNPC
+{
+    public override void SetDefaults()
+    {
+        NPC.townNPC = true;
+        NPC.friendly = true;
+        NPC.width = 18;
+        NPC.height = 40;
+        NPC.aiStyle = NPCAIStyleID.Passive;
+        NPC.damage = 10;
+        NPC.defense = 15;
+        NPC.lifeMax = 250;
+        NPC.HitSound = SoundID.NPCHit1;
+        NPC.DeathSound = SoundID.NPCDeath1;
+        NPC.knockBackResist = 0.5f;
+        AnimationType = NPCID.Guide;
+    }
+
+    public override bool CanTownNPCSpawn(int numTownNPCs)
+    {
+        // Spawn once a specific boss has been defeated
+        return NPC.downedBoss1;
+    }
+
+    public override string GetChat()
+    {
+        return "Hello, adventurer!";
+    }
+
+    public override void SetChatButtons(ref string button, ref string button2)
+    {
+        button = Language.GetTextValue("LegacyInterface.28"); // "Shop"
+    }
+
+    public override void TownNPCAttackStrength(ref int damage, ref float knockback)
+    {
+        damage = 20;
+        knockback = 4f;
+    }
+}
+```
+
+<Warning>
+Both `[AutoloadHead]` and `NPC.townNPC = true` are required for a town NPC to appear in the housing menu and move in. Omitting either will silently break the NPC.
+</Warning>
+
+---
+
+## Full example — ExampleCustomAISlimeNPC
+
+A complete enemy with a custom state-machine AI and sprite animation, taken directly from ExampleMod:
+
+```csharp
+public class ExampleCustomAISlimeNPC : ModNPC
+{
+    private enum ActionState { Asleep, Notice, Jump, Hover, Fall }
+    private enum Frame { Asleep, Notice, Falling, Flutter1, Flutter2, Flutter3 }
+
+    public ref float AI_State => ref NPC.ai[0];
+    public ref float AI_Timer => ref NPC.ai[1];
+    public ref float AI_FlutterTime => ref NPC.ai[2];
+
+    public override void SetStaticDefaults()
+    {
+        Main.npcFrameCount[Type] = 6;
+        NPCID.Sets.SpecificDebuffImmunity[Type][BuffID.Poisoned] = true;
+    }
+
+    public override void SetDefaults()
+    {
+        NPC.width = 36;
+        NPC.height = 36;
+        NPC.aiStyle = -1;
+        NPC.damage = 7;
+        NPC.defense = 2;
+        NPC.lifeMax = 25;
+        NPC.HitSound = SoundID.NPCHit1;
+        NPC.DeathSound = SoundID.NPCDeath1;
+        NPC.value = 25f;
+        Banner = Type;
+        BannerItem = ModContent.ItemType<ExampleCustomAISlimeNPCBanner>();
+    }
+
+    public override float SpawnChance(NPCSpawnInfo spawnInfo)
+    {
+        return SpawnCondition.OverworldDaySlime.Chance * 0.1f;
+    }
+
+    public override void AI()
+    {
+        switch (AI_State)
+        {
+            case (float)ActionState.Asleep:
+                NPC.TargetClosest(true);
+                if (NPC.HasValidTarget && Main.player[NPC.target].Distance(NPC.Center) < 500f)
+                {
+                    AI_State = (float)ActionState.Notice;
+                    AI_Timer = 0;
+                }
+                break;
+
+            case (float)ActionState.Notice:
+                AI_Timer++;
+                if (AI_Timer >= 20)
+                {
+                    AI_State = (float)ActionState.Jump;
+                    AI_Timer = 0;
+                }
+                break;
+
+            case (float)ActionState.Jump:
+                AI_Timer++;
+                if (AI_Timer == 1)
+                    NPC.velocity = new Vector2(NPC.direction * 2, -10f);
+                else if (AI_Timer > 40)
+                {
+                    AI_State = (float)ActionState.Hover;
+                    AI_Timer = 0;
+                }
+                break;
+
+            case (float)ActionState.Hover:
+                AI_Timer++;
+                if (AI_Timer == 1 && Main.netMode != NetmodeID.MultiplayerClient)
+                {
+                    AI_FlutterTime = Main.rand.NextBool() ? 100 : 50;
+                    NPC.netUpdate = true;
+                }
+                NPC.velocity += new Vector2(0, -0.35f);
+                if (AI_Timer > AI_FlutterTime)
+                {
+                    AI_State = (float)ActionState.Fall;
+                    AI_Timer = 0;
+                }
+                break;
+
+            case (float)ActionState.Fall:
+                if (NPC.velocity.Y == 0)
+                {
+                    NPC.velocity.X = 0;
+                    AI_State = (float)ActionState.Asleep;
+                    AI_Timer = 0;
+                }
+                break;
+        }
+    }
+
+    public override void FindFrame(int frameHeight)
+    {
+        NPC.spriteDirection = NPC.direction;
+        switch (AI_State)
+        {
+            case (float)ActionState.Asleep:
+                NPC.frame.Y = (int)Frame.Asleep * frameHeight; break;
+            case (float)ActionState.Notice:
+                NPC.frame.Y = (AI_Timer < 10 ? (int)Frame.Notice : (int)Frame.Asleep) * frameHeight; break;
+            case (float)ActionState.Jump:
+            case (float)ActionState.Fall:
+                NPC.frame.Y = (int)Frame.Falling * frameHeight; break;
+            case (float)ActionState.Hover:
+                NPC.frameCounter++;
+                int flutterFrame = (int)(NPC.frameCounter / 10) % 3;
+                NPC.frame.Y = ((int)Frame.Flutter1 + flutterFrame) * frameHeight; break;
+        }
+    }
+}
+```
+
+<Note>
+When writing random values inside `AI()` (e.g. `Main.rand`), always guard them with `if (Main.netMode != NetmodeID.MultiplayerClient)` and set `NPC.netUpdate = true` so the server syncs the result to clients. Without this, client and server AI will diverge.
+</Note>
+
+---
+
+## Boss vs. regular enemy
+
+<CardGroup cols={2}>
+  <Card title="Regular enemy" icon="skull">
+    - `NPC.boss = false`
+    - `NPC.aiStyle` set to a vanilla style or custom
+    - Spawns naturally via `SpawnChance`
+    - Drops via `ModifyNPCLoot`
+  </Card>
+  <Card title="Boss" icon="crown">
+    - `NPC.boss = true` — shows the health bar
+    - Typically `NPC.aiStyle = -1` with a full custom AI
+    - Spawned by a summon item via `NPC.NewNPC`
+    - Requires `[AutoloadBossHead]` for the minimap icon
+    - Set `NPCID.Sets.MPAllowedEnemies[Type] = true` for multiplayer
+    - Use `OnKill` to set defeat flags in a `ModSystem`
+  </Card>
+</CardGroup>

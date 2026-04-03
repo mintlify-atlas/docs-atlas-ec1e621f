@@ -1,0 +1,206 @@
+---
+title: "ModTile"
+description: "Creating custom placeable tiles, furniture, and ore veins."
+---
+
+`ModTile` is the base class for every tile your mod adds — from simple building blocks and ores to multi-tile furniture and interactive objects. One instance of your class exists per tile type; hooks are called on that shared instance, not on individual world tiles.
+
+<Note>
+  Every tile must have a corresponding `ModItem` that places it. Set `Item.createTile = ModContent.TileType<YourTile>()` on that item so the tile drops the correct item when mined.
+</Note>
+
+## Setting up a tile
+
+Override `SetStaticDefaults()` to configure a tile's properties. This is the correct place to set `Main.tile*` flags and `TileObjectData`.
+
+```csharp
+public override void SetStaticDefaults() {
+    Main.tileSolid[Type] = true;       // players and NPCs stand on the tile
+    Main.tileMergeDirt[Type] = true;   // blends visually with dirt
+    Main.tileBlockLight[Type] = true;  // blocks light from passing through
+
+    DustType = DustID.Platinum;
+    AddMapEntry(new Color(152, 171, 198), CreateMapEntryName());
+}
+```
+
+### Key `Main.tile*` flags
+
+| Flag | Effect |
+|---|---|
+| `Main.tileSolid[Type]` | Makes the tile solid — entities stand on it. |
+| `Main.tileFrameImportant[Type]` | Required for tiles that use `TileObjectData` (furniture, lamps, etc.). |
+| `Main.tileLighted[Type]` | Marks the tile as a light source (also implement `ModifyLight`). |
+| `Main.tileLavaDeath[Type]` | Destroys the tile when lava touches it. |
+| `Main.tileSpelunker[Type]` | Highlights the tile with the Spelunker buff. |
+
+## Mining properties
+
+```csharp
+// Require 65% pickaxe power (between Gold/Platinum pick and Cobalt/Palladium pick)
+MinPick = 65;
+
+// Take roughly twice as long to mine as a standard tile
+MineResist = 2f;
+```
+
+`MinPick` sets the minimum `Item.pick` value required to break the tile. `MineResist` is a multiplier on mining time (default `1f`).
+
+## Crafting station adjacency
+
+`AdjTiles` lets your tile count as one or more vanilla tile types for crafting purposes. For example, making your workbench count as a vanilla workbench:
+
+```csharp
+AdjTiles = [TileID.WorkBenches];
+```
+
+## Multi-tile furniture with TileObjectData
+
+For tiles larger than 1×1 — chairs, chests, lamps, and so on — set `Main.tileFrameImportant[Type] = true` and configure `TileObjectData.newTile` before calling `TileObjectData.addTile(Type)`.
+
+<Tip>
+  Copy from an existing style with `TileObjectData.newTile.CopyFrom(TileObjectData.StyleXxY)` to inherit sensible defaults, then override only what differs.
+</Tip>
+
+```csharp
+public override void SetStaticDefaults() {
+    Main.tileFrameImportant[Type] = true;
+    Main.tileLavaDeath[Type] = true;
+    TileID.Sets.HasOutlines[Type] = true;
+
+    // Start from a built-in 1×2 template
+    TileObjectData.newTile.CopyFrom(TileObjectData.Style1x2);
+    TileObjectData.newTile.CoordinateHeights = [16, 18];
+    TileObjectData.newTile.CoordinatePaddingFix = new Point16(0, 2);
+    TileObjectData.addTile(Type);
+
+    AddMapEntry(new Color(200, 200, 200), Language.GetText("MapObject.Chair"));
+}
+```
+
+After `TileObjectData.addTile(Type)`, the object data is locked in. Never modify `TileObjectData.newTile` after that call.
+
+## Animated tiles
+
+Set `AnimationFrameHeight` to the pixel height of one animation frame, then override `AnimateTile` to advance the global frame counter for all tiles of this type.
+
+```csharp
+// In SetStaticDefaults — each frame is 56 px tall in the spritesheet
+AnimationFrameHeight = 56;
+
+// Global animation: cycle 6 frames, hold each frame for 8 ticks
+public override void AnimateTile(ref int frame, ref int frameCounter) {
+    if (++frameCounter >= 8) {
+        frameCounter = 0;
+        frame = ++frame % 6;
+    }
+}
+```
+
+Use `AnimateIndividualTile` to offset specific tile instances independently (e.g., staggering adjacent animated torches so they flicker out of sync).
+
+## Key hooks
+
+### `KillTile`
+
+Called when the tile is hit with a pickaxe. Use it to prevent mining, produce only visual effects, or suppress item drops.
+
+```csharp
+public override void KillTile(int i, int j, ref bool fail, ref bool effectOnly, ref bool noItem) {
+    // Prevent destroying while a condition is unmet
+    if (SomeCondition()) {
+        fail = true;
+    }
+}
+```
+
+### `KillMultiTile`
+
+Called **once** when any part of a multi-tile object is destroyed, with `i` and `j` pointing to the top-left tile. Use it to clean up associated `TileEntity` instances or chest data.
+
+```csharp
+public override void KillMultiTile(int i, int j, int frameX, int frameY) {
+    // Remove a TileEntity at these coordinates
+    ModContent.GetInstance<MyTileEntity>().Kill(i, j);
+}
+```
+
+### `RightClick`
+
+Called when the player right-clicks the tile. Return `true` to consume the interaction (prevents minion retargeting and other right-click actions).
+
+```csharp
+public override bool RightClick(int i, int j) {
+    Player player = Main.LocalPlayer;
+    // Open a custom UI, toggle a state, etc.
+    player.sitting.SitDown(player, i, j);
+    return true;
+}
+```
+
+### `NearbyEffects`
+
+Called for tiles within range of the player. The `closer` parameter distinguishes **visual effect** range (dependent on screen size and zoom) from the fixed **gameplay effect** range (169×124 tiles centred on the player).
+
+```csharp
+public override void NearbyEffects(int i, int j, bool closer) {
+    if (!closer) {
+        // Apply a gameplay buff when within the fixed gameplay range
+        Main.LocalPlayer.AddBuff(BuffID.Campfire, 2);
+    }
+}
+```
+
+### `PlaceInWorld`
+
+Called immediately after the tile is placed by an item, before `SetStaticDefaults` properties take effect for that frame.
+
+## Complete example — `ExampleOre`
+
+The following is taken directly from `ExampleMod/Content/Tiles/ExampleOre.cs`.
+
+```csharp
+public class ExampleOre : ModTile
+{
+    public override void SetStaticDefaults() {
+        TileID.Sets.Ore[Type] = true;
+        TileID.Sets.FriendlyFairyCanLureTo[Type] = true;
+        Main.tileSpelunker[Type] = true;           // glows with Spelunker buff
+        Main.tileOreFinderPriority[Type] = 410;    // Metal Detector value
+        Main.tileShine2[Type] = true;              // subtle shimmer effect
+        Main.tileShine[Type] = 975;                // dust frequency (higher = rarer)
+        Main.tileMergeDirt[Type] = true;
+        Main.tileSolid[Type] = true;
+        Main.tileBlockLight[Type] = true;
+
+        LocalizedText name = CreateMapEntryName();
+        AddMapEntry(new Color(152, 171, 198), name);
+
+        DustType = DustID.Platinum;
+        VanillaFallbackOnModDeletion = TileID.Silver;
+        HitSound = SoundID.Tink;
+        // MineResist = 4f;
+        // MinPick = 200;
+    }
+
+    public override bool IsTileBiomeSightable(int i, int j, ref Color sightColor) {
+        sightColor = Color.Blue;
+        return true;
+    }
+}
+```
+
+<Tip>
+  To generate your ore during world creation, pair your `ModTile` with a `ModSystem` that overrides `ModifyWorldGenTasks` and inserts a custom `GenPass` after the vanilla `"Shinies"` pass. See `ExampleMod/Content/Tiles/ExampleOre.cs` for the full world-gen companion class.
+</Tip>
+
+## Dropping items
+
+The engine automatically resolves the item to drop by finding a `ModItem` whose `Item.createTile` matches your tile type. For tiles with no associated placeable item (like open doors) or tiles with multiple styles, call `RegisterItemDrop` inside `SetStaticDefaults`:
+
+```csharp
+// Drop item type 0 for style 0, item type 1 for style 1
+RegisterItemDrop(ModContent.ItemType<MyClosedDoorItem>(), 0);
+```
+
+Omit the style parameter to register a fallback drop for any unmatched style.

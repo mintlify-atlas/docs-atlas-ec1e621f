@@ -1,0 +1,241 @@
+---
+title: "GlobalProjectile"
+description: "Intercept and modify all projectiles in the game — both vanilla and modded — from a single class."
+---
+
+`GlobalProjectile` lets you hook into every projectile that exists in the game. Unlike `ModProjectile`, which scopes behavior to a single custom projectile, a `GlobalProjectile` subclass runs for **all** projectiles — including every vanilla bullet, arrow, and sword beam — unless you restrict it with `AppliesToEntity` or a type check.
+
+<Note>
+  Use `GlobalProjectile` to apply universal effects (trails, debuffs, damage modifications) across entire categories of projectiles. Use `ModProjectile` when you are creating a brand-new projectile.
+</Note>
+
+## Global vs. mod-specific
+
+| | `GlobalProjectile` | `ModProjectile` |
+|---|---|---|
+| Applies to | Every projectile in the game | Only the one projectile you define |
+| Primary use | Cross-cutting changes, hit reactions, universal effects | New projectiles with custom AI and visuals |
+| Instance per projectile | Optional (`InstancePerEntity`) | Always a dedicated instance |
+
+Both types can coexist. A typical pattern is to create a projectile with `ModProjectile` and then use `GlobalProjectile` to apply a color trail to all projectiles shot by a certain weapon class.
+
+## Basic usage
+
+Create a class that inherits from `GlobalProjectile`. tModLoader registers it automatically.
+
+```csharp
+using Terraria;
+using Terraria.ModLoader;
+
+public class MyGlobalProjectile : GlobalProjectile
+{
+    // Hooks go here
+}
+```
+
+## Targeting specific projectiles
+
+Guard with a type check inside any hook:
+
+```csharp
+public override void OnHitNPC(Projectile projectile, NPC target, NPC.HitInfo hit, int damageDone)
+{
+    if (projectile.type == ProjectileID.FlamingArrow)
+        target.AddBuff(BuffID.OnFire, 120);
+}
+```
+
+Or use `AppliesToEntity` to skip the global entirely for projectiles you do not care about:
+
+```csharp
+public override bool AppliesToEntity(Projectile entity, bool lateInstantiation)
+{
+    // Only run this global for hostile projectiles
+    return entity.hostile;
+}
+```
+
+## Storing per-projectile state
+
+Set `InstancePerEntity` to `true` and add instance fields to track data on individual projectile instances.
+
+```csharp
+public class TrailingProjectile : GlobalProjectile
+{
+    public override bool InstancePerEntity => true;
+
+    public bool trailActive;
+    public Color trailColor;
+}
+```
+
+Retrieve the instance with `projectile.GetGlobalProjectile<TrailingProjectile>()`.
+
+---
+
+## Key hooks
+
+### `SetDefaults`
+
+Called immediately after a projectile's default stats are set. Modify damage, speed, penetration, or any other field here.
+
+```csharp
+public override void SetDefaults(Projectile projectile)
+{
+    // All arrows pierce one additional target
+    if (projectile.arrow)
+        projectile.penetrate++;
+}
+```
+
+### `PreAI` / `PostAI`
+
+`PreAI` runs before the projectile's AI loop. Return `false` to cancel the vanilla AI entirely. `PostAI` always runs after, regardless of what `PreAI` returned.
+
+```csharp
+public override bool PreAI(Projectile projectile)
+{
+    // Return false to fully replace vanilla AI
+    return true;
+}
+
+public override void PostAI(Projectile projectile)
+{
+    // Spawn a dust trail on every active projectile
+    if (trailActive)
+    {
+        Dust.NewDustDirect(
+            projectile.position, projectile.width, projectile.height,
+            DustID.TintableDustLighted, default, default, default, trailColor);
+    }
+}
+```
+
+### `ModifyHitNPC` / `OnHitNPC`
+
+`ModifyHitNPC` lets you change damage modifiers before they are applied. `OnHitNPC` lets you add effects after the hit lands.
+
+```csharp
+public override void ModifyHitNPC(Projectile projectile, NPC target, ref NPC.HitModifiers modifiers)
+{
+    // Boost crit multiplier for all magic projectiles
+    if (projectile.DamageType == DamageClass.Magic)
+        modifiers.CritDamage += 0.5f;
+}
+
+public override void OnHitNPC(Projectile projectile, NPC target, NPC.HitInfo hit, int damageDone)
+{
+    if (applyBuffOnHit)
+        target.AddBuff(BuffID.OnFire, 50);
+}
+```
+
+### `ModifyHitPlayer` / `OnHitPlayer`
+
+The player-facing equivalent of `ModifyHitNPC` / `OnHitNPC`. Runs when a hostile projectile hits a player.
+
+```csharp
+public override void ModifyHitPlayer(Projectile projectile, Player target, ref Player.HurtModifiers modifiers)
+{
+    // All hostile projectiles deal 5% less damage
+    modifiers.SourceDamage *= 0.95f;
+}
+
+public override void OnHitPlayer(Projectile projectile, Player target, Player.HurtInfo info)
+{
+    // Inflict Slow on player when hit by any hostile projectile
+    target.AddBuff(BuffID.Slow, 60);
+}
+```
+
+### `PreDraw` / `PostDraw`
+
+Control or supplement how a projectile is drawn. Return `false` from `PreDraw` to stop the vanilla draw call.
+
+```csharp
+public override bool PreDraw(Projectile projectile, ref Color lightColor)
+{
+    // Tint all fire projectiles orange
+    if (projectile.type == ProjectileID.Fireball)
+        lightColor = Color.Orange;
+
+    return true; // still run vanilla draw
+}
+
+public override void PostDraw(Projectile projectile, Color lightColor)
+{
+    // Draw extra effects on top
+}
+```
+
+### `OnKill`
+
+Called when a projectile is removed from the world (expires or hits a tile). Spawn dust, sounds, or secondary projectiles here.
+
+```csharp
+public override void OnKill(Projectile projectile, int timeLeft)
+{
+    // Check owner so this only runs on the owner's machine in multiplayer
+    if (projectile.owner == Main.myPlayer && projectile.type == ProjectileID.Bomb)
+    {
+        // Trigger an extra visual effect
+    }
+}
+```
+
+<Warning>
+  Spawning items or other projectiles in `OnKill` should be gated on `projectile.owner == Main.myPlayer` to avoid duplicating effects in multiplayer.
+</Warning>
+
+---
+
+## Example: buff-on-hit projectile modifier
+
+The following example from ExampleMod uses `InstancePerEntity` to let individual projectile instances opt in to special behaviors (applying a buff on hit, displaying a counter message, drawing a color trail). Other parts of a mod set these flags on specific projectile instances.
+
+```csharp
+public class ExampleProjectileModifications : GlobalProjectile
+{
+    public override bool InstancePerEntity => true;
+
+    public bool applyBuffOnHit;
+    public bool sayTimesHitOnThirdHit;
+    private Color trailColor;
+    private bool trailActive;
+
+    // Other code can call this to enable a trail on a specific projectile
+    public void SetTrail(Color color)
+    {
+        trailColor = color;
+        trailActive = true;
+    }
+
+    public override void PostAI(Projectile projectile)
+    {
+        if (trailActive)
+        {
+            Dust.NewDustDirect(
+                projectile.position, projectile.width, projectile.height,
+                DustID.TintableDustLighted, default, default, default, trailColor);
+        }
+    }
+
+    public override void OnHitNPC(Projectile projectile, NPC target, NPC.HitInfo hit, int damageDone)
+    {
+        if (sayTimesHitOnThirdHit)
+        {
+            var globalNPC = target.GetGlobalNPC<ProjectileModificationGlobalNPC>();
+            if (globalNPC.timesHitByModifiedProjectiles % 3 == 0)
+                Main.NewText($"Hit {globalNPC.timesHitByModifiedProjectiles} times total.");
+            globalNPC.timesHitByModifiedProjectiles++;
+        }
+
+        if (applyBuffOnHit)
+            target.AddBuff(BuffID.OnFire, 50);
+    }
+}
+```
+
+<Tip>
+  The full source is at `ExampleMod/Common/GlobalProjectiles/ExampleProjectileModifications.cs`. A companion `GlobalNPC` (`ProjectileModificationGlobalNPC`) tracks how many times each NPC has been hit by modified projectiles.
+</Tip>

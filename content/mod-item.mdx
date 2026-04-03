@@ -1,0 +1,407 @@
+---
+title: "ModItem"
+description: Creating custom items, weapons, accessories, and consumables
+---
+
+`ModItem` is the base class for every custom item in your mod. Create a class that inherits from `ModItem`, override the hooks you need, and tModLoader registers it automatically.
+
+```csharp
+using Terraria;
+using Terraria.ID;
+using Terraria.ModLoader;
+
+public class MyItem : ModItem
+{
+    public override void SetDefaults()
+    {
+        // ...
+    }
+}
+```
+
+<Note>
+You do not need to call any registration method. tModLoader discovers all `ModItem` subclasses at load time.
+</Note>
+
+---
+
+## SetStaticDefaults
+
+Called once during mod loading. Use this to configure data that never changes at runtime, such as frame counts and ID sets.
+
+Display name and tooltip are **not** set in code — they come from your mod's localization file (e.g., `en-US.hjson`):
+
+```hjson
+Items.MyItem.DisplayName: My Sword
+Items.MyItem.Tooltip: Inflicts On Fire! on hit
+```
+
+---
+
+## SetDefaults
+
+Called every time the item's stats are initialized or reset. This is where you configure the item's core stats.
+
+```csharp
+public override void SetDefaults()
+{
+    Item.width = 40;       // Hitbox width (pixels)
+    Item.height = 40;      // Hitbox height (pixels)
+
+    Item.useStyle = ItemUseStyleID.Swing;
+    Item.useTime = 20;           // Ticks per use (60 = 1 second)
+    Item.useAnimation = 20;
+    Item.autoReuse = true;
+
+    Item.DamageType = DamageClass.Melee;
+    Item.damage = 50;
+    Item.knockBack = 6;
+    Item.crit = 6;           // Bonus crit % (player base is 4%)
+
+    Item.value = Item.buyPrice(gold: 1);
+    Item.rare = ItemRarityID.Green;
+    Item.UseSound = SoundID.Item1;
+}
+```
+
+<AccordionGroup>
+  <Accordion title="Common SetDefaults properties">
+
+| Property | Type | Description |
+|---|---|---|
+| `Item.damage` | `int` | Base damage dealt |
+| `Item.useTime` | `int` | Ticks between uses (60 = 1 sec) |
+| `Item.useAnimation` | `int` | Ticks the animation plays |
+| `Item.useStyle` | `int` | Swing, shoot, hold-out, etc. See `ItemUseStyleID` |
+| `Item.DamageType` | `DamageClass` | `Melee`, `Ranged`, `Magic`, `Summon`, etc. |
+| `Item.knockBack` | `float` | Knockback force (0–20) |
+| `Item.crit` | `int` | Bonus critical strike chance |
+| `Item.noMelee` | `bool` | Prevents the item swing from dealing damage directly |
+| `Item.shoot` | `int` | Projectile type spawned on use |
+| `Item.shootSpeed` | `float` | Speed of spawned projectile |
+| `Item.useAmmo` | `int` | Ammo type ID consumed on use |
+| `Item.accessory` | `bool` | Mark as an accessory |
+| `Item.consumable` | `bool` | Item is consumed on use |
+| `Item.maxStack` | `int` | Maximum stack size |
+| `Item.value` | `int` | Copper coin value; use `Item.buyPrice()` |
+| `Item.rare` | `int` | Rarity tier. See `ItemRarityID` |
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Key hooks
+
+### CanUseItem
+
+Return `false` to prevent the item from being used. Runs on all clients and the server.
+
+```csharp
+public override bool CanUseItem(Player player)
+{
+    // Only allow use while not in water
+    return !player.wet;
+}
+```
+
+### UseItem
+
+Called each tick the item is actively used. Return `true` if the item did something (forces `itemTime`), `false` to keep `itemTime` at 0, or `null` for vanilla behavior.
+
+```csharp
+public override bool? UseItem(Player player)
+{
+    // Heal the player for 10 on each use tick
+    player.Heal(10);
+    return true;
+}
+```
+
+### HoldItem
+
+Runs every frame while the player has this item selected, even when not actively using it. Use it for passive effects like the Torch's light emission.
+
+```csharp
+public override void HoldItem(Player player)
+{
+    // Emit a small amount of light while holding
+    Lighting.AddLight(player.Center, 0.5f, 0.5f, 0.2f);
+}
+```
+
+### Shoot
+
+Override the projectile spawn logic. Return `false` to cancel vanilla spawning and manage projectiles manually.
+
+```csharp
+public override bool Shoot(
+    Player player,
+    EntitySource_ItemUse_WithAmmo source,
+    Vector2 position,
+    Vector2 velocity,
+    int type,
+    int damage,
+    float knockback)
+{
+    // Fire three projectiles in a spread
+    for (int i = -1; i <= 1; i++)
+    {
+        Vector2 spread = velocity.RotatedBy(MathHelper.ToRadians(i * 10));
+        Projectile.NewProjectile(source, position, spread, type, damage, knockback, player.whoAmI);
+    }
+    return false; // false prevents vanilla from spawning its own projectile
+}
+```
+
+### ModifyShootStats
+
+Adjust spawn parameters before the projectile is created. Runs on the local client only.
+
+```csharp
+public override void ModifyShootStats(
+    Player player,
+    ref Vector2 position,
+    ref Vector2 velocity,
+    ref int type,
+    ref int damage,
+    ref float knockback)
+{
+    // Replace bullets with high-velocity bullets
+    if (type == ProjectileID.Bullet)
+        type = ProjectileID.BulletHighVelocity;
+}
+```
+
+### MeleeEffects
+
+Creates visual effects during a melee swing (dust, light, etc.). Called on the local client only.
+
+```csharp
+public override void MeleeEffects(Player player, Rectangle hitbox)
+{
+    if (Main.rand.NextBool(3))
+    {
+        Dust.NewDust(
+            new Vector2(hitbox.X, hitbox.Y),
+            hitbox.Width, hitbox.Height,
+            DustID.Torch);
+    }
+}
+```
+
+### UpdateEquip
+
+Called every tick while the item is worn as armor or an accessory. Apply stat bonuses here.
+
+```csharp
+// For armor — called when in any armor slot
+public override void UpdateEquip(Player player)
+{
+    player.statDefense += 5;
+}
+```
+
+### UpdateAccessory
+
+Called every tick while the item is in an accessory slot. The `hideVisual` parameter is `true` when the slot is hidden.
+
+```csharp
+public override void UpdateAccessory(Player player, bool hideVisual)
+{
+    player.moveSpeed += 0.1f;
+    player.jumpSpeedBoost += 2f;
+}
+```
+
+### ModifyTooltips
+
+Add, remove, or reorder tooltip lines at runtime.
+
+```csharp
+public override void ModifyTooltips(List<TooltipLine> tooltips)
+{
+    // Insert a colored line after the damage line
+    var line = new TooltipLine(Mod, "MyLine", "Deals bonus fire damage")
+    {
+        OverrideColor = Color.OrangeRed
+    };
+    tooltips.Add(line);
+}
+```
+
+### OnPickup
+
+Triggered when a player picks up the item from the world.
+
+```csharp
+public override bool OnPickup(Player player)
+{
+    player.AddBuff(BuffID.Regeneration, 120); // 2-second Regen
+    return true; // true = consume the item normally
+}
+```
+
+### SaveData / LoadData
+
+Persist custom item data across sessions. Both methods must be overridden together.
+
+```csharp
+public int ChargeLevel = 0;
+
+public override void SaveData(TagCompound tag)
+{
+    tag["charge"] = ChargeLevel;
+}
+
+public override void LoadData(TagCompound tag)
+{
+    ChargeLevel = tag.GetInt("charge");
+}
+```
+
+---
+
+## Full example — ExampleSword
+
+The following is the complete source of `ExampleSword.cs` from ExampleMod, showing a melee weapon with visual effects and a debuff on hit:
+
+```csharp
+using Microsoft.Xna.Framework;
+using Terraria;
+using Terraria.ID;
+using Terraria.ModLoader;
+
+namespace ExampleMod.Content.Items.Weapons
+{
+    public class ExampleSword : ModItem
+    {
+        public override void SetDefaults()
+        {
+            Item.width = 40;
+            Item.height = 40;
+
+            Item.useStyle = ItemUseStyleID.Swing;
+            Item.useTime = 20;
+            Item.useAnimation = 20;
+            Item.autoReuse = true;
+
+            Item.DamageType = DamageClass.Melee;
+            Item.damage = 50;
+            Item.knockBack = 6;
+            Item.crit = 6;
+
+            Item.value = Item.buyPrice(gold: 1);
+            Item.rare = ItemRarityID.Green;
+            Item.UseSound = SoundID.Item1;
+        }
+
+        public override void MeleeEffects(Player player, Rectangle hitbox)
+        {
+            if (Main.rand.NextBool(3))
+            {
+                // Emit sparkle dust when swung
+                Dust.NewDust(
+                    new Vector2(hitbox.X, hitbox.Y),
+                    hitbox.Width, hitbox.Height,
+                    ModContent.DustType<Dusts.Sparkle>());
+            }
+        }
+
+        public override void OnHitNPC(Player player, NPC target, NPC.HitInfo hit, int damageDone)
+        {
+            // Inflict On Fire! for 1 second on any enemy hit
+            target.AddBuff(BuffID.OnFire, 60);
+        }
+
+        public override void AddRecipes()
+        {
+            CreateRecipe()
+                .AddIngredient<ExampleItem>()
+                .AddTile<Tiles.Furniture.ExampleWorkbench>()
+                .Register();
+        }
+    }
+}
+```
+
+---
+
+## Ranged weapon example — ExampleGun
+
+A ranged weapon that consumes bullet ammo and fires a custom projectile:
+
+```csharp
+public class ExampleGun : ModItem
+{
+    public override void SetDefaults()
+    {
+        Item.width = 62;
+        Item.height = 32;
+        Item.rare = ItemRarityID.Green;
+
+        Item.useTime = 8;
+        Item.useAnimation = 8;
+        Item.useStyle = ItemUseStyleID.Shoot;
+        Item.autoReuse = true;
+        Item.UseSound = SoundID.Item11;
+
+        Item.DamageType = DamageClass.Ranged;
+        Item.damage = 20;
+        Item.knockBack = 5f;
+        Item.noMelee = true;
+
+        Item.shoot = ProjectileID.PurificationPowder; // placeholder
+        Item.shootSpeed = 10f;
+        Item.useAmmo = AmmoID.Bullet;
+    }
+
+    public override void ModifyShootStats(
+        Player player,
+        ref Vector2 position,
+        ref Vector2 velocity,
+        ref int type,
+        ref int damage,
+        ref float knockback)
+    {
+        // 1-in-3 chance to fire a special instanced projectile instead
+        if (Main.rand.NextBool(3))
+            type = ModContent.ProjectileType<ExampleInstancedProjectile>();
+    }
+}
+```
+
+<Tip>
+Use `Item.DefaultToRangedWeapon(ammoId, useStyle, useTime, shootSpeed)` to set all ranged weapon properties in a single call.
+</Tip>
+
+---
+
+## Accessory example
+
+Accessories use `UpdateAccessory` to apply effects and `[AutoloadEquip]` to load their equip textures automatically:
+
+```csharp
+[AutoloadEquip(EquipType.Neck, EquipType.Balloon)]
+public class SimpleAccessory : ModItem
+{
+    public override void SetDefaults()
+    {
+        Item.width = 34;
+        Item.height = 34;
+        Item.accessory = true;
+        Item.value = Item.buyPrice(gold: 15);
+        Item.rare = ItemRarityID.Pink;
+    }
+
+    public override void UpdateAccessory(Player player, bool hideVisual)
+    {
+        // Set a field on our custom ModPlayer instance
+        player.GetModPlayer<SimpleModPlayer>().FrostBurnSummon = true;
+    }
+}
+```
+
+<Note>
+Accessory texture variants (e.g. `_Neck`, `_Balloon`) must be placed next to the item's main texture with matching filenames. The `[AutoloadEquip]` attribute registers them automatically.
+</Note>

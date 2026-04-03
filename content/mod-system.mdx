@@ -1,0 +1,261 @@
+---
+title: "ModSystem"
+description: "Adding world-level hooks, world generation, and recipe modifications."
+---
+
+`ModSystem` provides a collection of general-purpose hooks that operate at the world or game level. Unlike the single `Mod` class, you can create **as many `ModSystem` classes as you need** — each in its own file, grouped by responsibility.
+
+Common uses include tracking world state (downed bosses, unlocked NPCs), adding custom world generation, modifying recipes, and updating UI elements.
+
+## Lifecycle hooks
+
+### `OnModLoad` / `OnModUnload`
+
+These run immediately after `Mod.Load()` and immediately before `Mod.Unload()` respectively. Use them for one-time setup and teardown that must happen around the full content load.
+
+```csharp
+public override void OnModLoad() {
+    // Register event listeners, initialise static state, etc.
+}
+
+public override void OnModUnload() {
+    // Detach event listeners, dispose of unmanaged resources
+}
+```
+
+### `PostSetupContent`
+
+Called after all content arrays have been resized to include modded content. Safe to look up IDs from other mods here.
+
+```csharp
+public override void PostSetupContent() {
+    // Cross-mod compatibility, look up IDs from other mods
+    if (ModLoader.TryGetMod("SomeMod", out Mod other)) {
+        otherItemID = other.Find<ModItem>("TheirItem").Type;
+    }
+}
+```
+
+## Recipes
+
+### `AddRecipes`
+
+Add your mod's recipes here. Called once during mod loading.
+
+```csharp
+public override void AddRecipes() {
+    Recipe.Create(ItemID.Wood, 10)
+        .AddIngredient(ItemID.Acorn, 1)
+        .Register();
+}
+```
+
+### `PostAddRecipes`
+
+Called after all mods have added their recipes. Use it to edit or remove recipes added by other mods.
+
+```csharp
+public override void PostAddRecipes() {
+    foreach (Recipe recipe in Main.recipe) {
+        if (recipe.HasResult(ItemID.Wood)) {
+            recipe.DisableRecipe();
+        }
+    }
+}
+```
+
+## World generation
+
+### `PreWorldGen` / `PostWorldGen`
+
+`PreWorldGen` runs before any generation passes execute. `PostWorldGen` runs after all passes finish, and is the right place to scatter additional tiles into a completed world.
+
+```csharp
+public override void PostWorldGen() {
+    // Scatter some tiles after the world is fully generated
+    for (int i = 0; i < 50; i++) {
+        int x = WorldGen.genRand.Next(100, Main.maxTilesX - 100);
+        int y = WorldGen.genRand.Next((int)Main.rockLayer, Main.UnderworldLayer);
+        WorldGen.PlaceTile(x, y, ModContent.TileType<MyTile>());
+    }
+}
+```
+
+### `ModifyWorldGenTasks`
+
+Inserts or removes generation passes from the world-gen pipeline. The `tasks` list represents the ordered passes; insert at the correct index to control what your code runs relative to.
+
+```csharp
+public override void ModifyWorldGenTasks(List<GenPass> tasks, ref double totalWeight) {
+    int shiniesIndex = tasks.FindIndex(p => p.Name == "Shinies");
+    if (shiniesIndex != -1) {
+        tasks.Insert(shiniesIndex + 1, new MyOrePass("My Ore", 237f));
+    }
+}
+```
+
+## World data persistence
+
+### `SaveWorldData` / `LoadWorldData`
+
+Save and load per-world custom data using `TagCompound`. These two methods must be overridden together.
+
+```csharp
+public override void SaveWorldData(TagCompound tag) {
+    if (downedMinionBoss) {
+        tag["downedMinionBoss"] = true;
+    }
+}
+
+public override void LoadWorldData(TagCompound tag) {
+    downedMinionBoss = tag.ContainsKey("downedMinionBoss");
+}
+```
+
+<Warning>
+  Write defensive loading code. If a key is absent — because the world predates your mod version that added it — `tag.ContainsKey` returns `false` safely, but calling `tag.Get<T>` on a missing key will throw.
+</Warning>
+
+### `ClearWorld`
+
+Called before a world is loaded or generated, and when mods are unloaded. Reset all static world-state fields here so they don't bleed between worlds.
+
+```csharp
+public override void ClearWorld() {
+    downedMinionBoss = false;
+}
+```
+
+## Multiplayer sync
+
+### `NetSend` / `NetReceive`
+
+These two methods must be overridden together. `NetSend` runs on the **server** whenever `MessageID.WorldData` is dispatched (e.g., after a boss dies). `NetReceive` runs on each **client** upon receipt.
+
+```csharp
+public override void NetSend(BinaryWriter writer) {
+    // WriteFlags packs up to 8 booleans into one byte
+    writer.WriteFlags(downedMinionBoss);
+}
+
+public override void NetReceive(BinaryReader reader) {
+    reader.ReadFlags(out downedMinionBoss);
+}
+```
+
+## World load / unload
+
+### `OnWorldLoad` / `OnWorldUnload`
+
+`OnWorldLoad` fires when a world is first opened (before `LoadWorldData`). `OnWorldUnload` fires when the world closes. These are appropriate places to initialise or dispose of world-scoped objects.
+
+```csharp
+public override void OnWorldLoad() { /* Initialise world-scoped data */ }
+public override void OnWorldUnload() { /* Dispose of world-scoped data */ }
+```
+
+## UI and interface
+
+### `UpdateUI`
+
+Called every frame on clients. Use it to call `Update` on `UserInterface` instances.
+
+```csharp
+private UserInterface _myUI;
+
+public override void UpdateUI(GameTime gameTime) {
+    _myUI?.Update(gameTime);
+}
+```
+
+### `ModifyInterfaceLayers`
+
+Insert custom `GameInterfaceLayer` instances into the draw order, or remove existing ones.
+
+```csharp
+public override void ModifyInterfaceLayers(List<GameInterfaceLayer> layers) {
+    int mouseIndex = layers.FindIndex(l => l.Name == "Vanilla: Mouse Text");
+    if (mouseIndex != -1) {
+        layers.Insert(mouseIndex, new LegacyGameInterfaceLayer(
+            "MyMod: Custom HUD",
+            () => { DrawMyHUD(); return true; },
+            InterfaceScaleType.UI));
+    }
+}
+```
+
+## Tile counts
+
+### `TileCountsAvailable`
+
+Provides a snapshot of how many tiles of each type are within the vanilla biome scan range around the player. Called every frame on clients. Store what you need in a field.
+
+```csharp
+public int exampleBlockCount;
+
+public override void TileCountsAvailable(ReadOnlySpan<int> tileCounts) {
+    exampleBlockCount = tileCounts[ModContent.TileType<ExampleBlock>()];
+}
+```
+
+## Complete example — `DownedBossSystem`
+
+The following is taken directly from `ExampleMod/Common/Systems/DownedBossSystem.cs`. It shows the canonical pattern for tracking whether a boss has been defeated in a given world and syncing that state to multiplayer clients.
+
+```csharp
+// Set this flag from your boss's OnKill hook:
+//   NPC.SetEventFlagCleared(ref DownedBossSystem.downedMinionBoss, -1);
+
+public class DownedBossSystem : ModSystem
+{
+    public static bool downedMinionBoss = false;
+
+    // Reset between worlds
+    public override void ClearWorld() {
+        downedMinionBoss = false;
+    }
+
+    // Persist to disk — only save non-default values
+    public override void SaveWorldData(TagCompound tag) {
+        if (downedMinionBoss) {
+            tag["downedMinionBoss"] = true;
+        }
+    }
+
+    public override void LoadWorldData(TagCompound tag) {
+        downedMinionBoss = tag.ContainsKey("downedMinionBoss");
+    }
+
+    // Sync to clients whenever world data is broadcast
+    public override void NetSend(BinaryWriter writer) {
+        writer.WriteFlags(downedMinionBoss);
+    }
+
+    public override void NetReceive(BinaryReader reader) {
+        reader.ReadFlags(out downedMinionBoss);
+    }
+}
+```
+
+<Tip>
+  Keep each `ModSystem` focused on a single responsibility. For example, put boss-defeat flags in one system, recipe modifications in another, and UI management in a third. Multiple small systems are easier to maintain than one large system.
+</Tip>
+
+## Hook call context summary
+
+| Hook | Called on |
+|---|---|
+| `OnModLoad` / `OnModUnload` | All contexts |
+| `PostSetupContent` | All contexts |
+| `AddRecipes` / `PostAddRecipes` | All contexts (load time) |
+| `PreWorldGen` / `PostWorldGen` | Server / single player |
+| `ModifyWorldGenTasks` | Server / single player |
+| `SaveWorldData` / `LoadWorldData` | Server / single player |
+| `NetSend` | Server only |
+| `NetReceive` | Client only |
+| `OnWorldLoad` / `OnWorldUnload` | All contexts |
+| `ClearWorld` | All contexts |
+| `UpdateUI` | Client only |
+| `ModifyInterfaceLayers` | Client only |
+| `TileCountsAvailable` | Client only |
+| `PreUpdateWorld` / `PostUpdateWorld` | Server / single player |

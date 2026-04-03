@@ -1,0 +1,177 @@
+---
+title: "Mod structure"
+description: "The recommended folder and file layout for a tModLoader mod, with an explanation of each directory's purpose and the naming conventions that drive autoloading."
+---
+
+tModLoader does not enforce a rigid directory structure, but following the conventions used by ExampleMod makes your project easier to navigate and takes full advantage of tModLoader's autoloading system.
+
+## Recommended layout
+
+```text
+MyMod/
+├── MyMod.csproj          # .NET project file
+├── MyMod.cs              # Main Mod class
+├── build.txt             # Mod metadata (author, version, display name)
+├── description.txt       # Description shown in the Mods menu and Workshop
+├── icon.png              # 80×80 mod icon shown in the Mods menu
+│
+├── Content/              # All game content (items, NPCs, tiles, etc.)
+│   ├── Items/
+│   ├── NPCs/
+│   ├── Tiles/
+│   ├── Projectiles/
+│   ├── Buffs/
+│   └── Biomes/
+│
+├── Common/               # Cross-cutting logic and hooks
+│   ├── Players/          # ModPlayer subclasses
+│   ├── Systems/          # ModSystem subclasses (world/game hooks)
+│   ├── GlobalItems/      # GlobalItem subclasses
+│   ├── GlobalNPCs/       # GlobalNPC subclasses
+│   ├── Configs/          # ModConfig subclasses
+│   └── UI/               # Custom UI elements
+│
+├── Assets/               # Non-code assets
+│   ├── Textures/         # Extra textures not co-located with code
+│   ├── Sounds/           # Custom sound effects (.wav/.ogg)
+│   └── Effects/          # HLSL shader files (.fx)
+│
+└── Localization/         # Translation files (.hjson)
+    ├── en-US.hjson
+    └── zh-Hans.hjson
+```
+
+---
+
+## Key files
+
+### build.txt
+
+`build.txt` is a plain-text file that tModLoader reads before building your mod. It controls mod metadata and packaging behavior.
+
+```text build.txt
+author = TML Team
+displayName = Example Mod
+homepage = https://tmodloader.net/
+version = 0.1
+buildIgnore = *.csproj, *.user, obj\*, bin\*, .vs\*
+```
+
+| Field | Purpose |
+|-------|---------|
+| `author` | Displayed in the Mods menu |
+| `displayName` | Human-readable name shown in-game |
+| `version` | Mod version — must be `major.minor[.patch[.revision]]` |
+| `homepage` | URL linked from the Mods menu |
+| `modReferences` | Comma-separated internal names of mods this mod depends on |
+| `buildIgnore` | Glob patterns for files excluded from the `.tmod` package |
+| `hideCode` | Set to `true` to exclude compiled assemblies from the package |
+| `includeSource` | Set to `true` to bundle source files for open-source mods |
+
+### .csproj
+
+The project file tells the .NET SDK how to compile your mod. The `<Import>` line pulls in a shared `.targets` file from the `ModSources/` parent directory that wires up references to Terraria and tModLoader.
+
+```xml MyMod.csproj
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\tModLoader.targets" />
+  <PropertyGroup>
+    <AssemblyName>MyMod</AssemblyName>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+</Project>
+```
+
+### Main Mod class
+
+Every mod must have exactly one class that inherits from `Terraria.ModLoader.Mod`. tModLoader finds it automatically — there is no registration step.
+
+```csharp MyMod.cs
+using Terraria.ModLoader;
+
+namespace MyMod
+{
+    public class MyMod : Mod
+    {
+        // Optional: override Load() and Unload() for
+        // global setup and teardown logic.
+    }
+}
+```
+
+### description.txt
+
+Plain text shown in the in-game Mods menu and Steam Workshop page. You can interpolate a handful of runtime values using `{PlaceholderName}` syntax:
+
+```text description.txt
+A great mod for Terraria.
+
+Version: {ModVersion}
+Built with tModLoader {tMLVersion}
+```
+
+---
+
+## Folder conventions
+
+### Content/
+
+`Content/` holds all classes and textures that represent new game objects. The subdirectory names are a convention, not a requirement enforced by tModLoader.
+
+| Subdirectory | What goes here |
+|---|---|
+| `Items/` | `ModItem` subclasses and their `.png` textures |
+| `NPCs/` | `ModNPC` subclasses (enemies, town NPCs, bosses) |
+| `Tiles/` | `ModTile` subclasses and tile textures |
+| `Projectiles/` | `ModProjectile` subclasses |
+| `Buffs/` | `ModBuff` subclasses |
+| `Biomes/` | `ModBiome` subclasses |
+
+### Common/
+
+`Common/` holds code that does not map 1:1 to a single content object — hooks, systems, global modifiers, UI, and configuration.
+
+| Subdirectory | What goes here |
+|---|---|
+| `Players/` | `ModPlayer` subclasses (per-player state and hooks) |
+| `Systems/` | `ModSystem` subclasses (world load, update loops, save data) |
+| `GlobalItems/` | `GlobalItem` subclasses (modify all items, including vanilla) |
+| `GlobalNPCs/` | `GlobalNPC` subclasses (modify all NPCs, including vanilla) |
+| `Configs/` | `ModConfig` subclasses (in-game configuration UI) |
+| `UI/` | Custom `UIState` and `UIElement` subclasses |
+
+### Assets/
+
+`Assets/` holds non-code resources that are not co-located with their content class. ExampleMod defines a constant to make references to this path consistent:
+
+```csharp
+public const string AssetPath = $"{nameof(ExampleMod)}/Assets/";
+```
+
+You can then reference a texture as `$"{ExampleMod.AssetPath}Textures/MyTexture"` anywhere in your mod.
+
+### Localization/
+
+`Localization/` holds `.hjson` files containing translated strings. tModLoader autoloads these at startup. File names follow the pattern `{locale}.hjson` (e.g. `en-US.hjson`) or `{locale}_Mods.{ModName}.{Category}.hjson` for split files.
+
+---
+
+## Autoloading and naming conventions
+
+tModLoader scans all types in your compiled assembly and automatically registers any class that inherits from a known `ModType` (such as `ModItem`, `ModNPC`, `ModTile`, etc.) — you do not need to call any registration method.
+
+**Texture resolution** follows the type's namespace and class name. For a class `MyMod.Content.Items.MyItem`, tModLoader looks for a texture at:
+
+```
+MyMod/Content/Items/MyItem.png
+```
+
+Keeping your folder structure parallel to your namespace means textures are found automatically with no extra configuration.
+
+<Note>
+  If a texture is missing, tModLoader will log a warning and substitute a pink checkerboard placeholder. Missing textures do not prevent the mod from loading.
+</Note>
+
+<Tip>
+  Browse ExampleMod's source for working examples of every content type. The full source is available on [GitHub](https://github.com/tModLoader/tModLoader/tree/1.4.4/ExampleMod).
+</Tip>

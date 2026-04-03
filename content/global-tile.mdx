@@ -1,0 +1,250 @@
+---
+title: "GlobalTile"
+description: "Modify tile behavior and properties across all tile types — both vanilla and modded."
+---
+
+`GlobalTile` lets you hook into the behavior of every tile in the game. Unlike `ModTile`, which scopes logic to a single custom tile, a `GlobalTile` subclass runs its hooks for **all** tile types — including every vanilla block, furniture piece, and ore — unless you add a type check inside the hook.
+
+<Note>
+  Use `GlobalTile` when you need to change how an existing category of tiles behaves — adding drops, reacting to right-clicks, or modifying tile placement. Use `ModTile` when you are creating a brand-new tile.
+</Note>
+
+## Global vs. mod-specific
+
+| | `GlobalTile` | `ModTile` |
+|---|---|---|
+| Applies to | Every tile type in the game | Only the one tile you define |
+| Primary use | Cross-cutting changes, drop modifications, universal tile reactions | New tiles with custom draw and placement logic |
+| Instance per tile | Not applicable — tiles are not instanced entities | Always a dedicated class |
+
+Both types can coexist. You might add a new ore with `ModTile` and then use `GlobalTile` to modify what items all ores drop.
+
+<Note>
+  Unlike `GlobalItem`, `GlobalNPC`, and `GlobalProjectile`, `GlobalTile` does **not** inherit from `GlobalType<Tile, GlobalTile>`. Tiles are not entity instances in the same sense — they are data stored in a world array. There is no `InstancePerEntity` or `AppliesToEntity`. Every hook receives the `type` integer argument that you use to filter.
+</Note>
+
+## Basic usage
+
+Create a class that inherits from `GlobalTile`. tModLoader registers it automatically.
+
+```csharp
+using Terraria;
+using Terraria.ModLoader;
+
+public class MyGlobalTile : GlobalTile
+{
+    // Hooks go here
+}
+```
+
+## Targeting specific tile types
+
+Every hook receives a `type` parameter. Use it to guard your logic:
+
+```csharp
+public override void KillTile(int i, int j, int type, ref bool fail, ref bool effectOnly, ref bool noItem)
+{
+    if (type == TileID.Stone)
+    {
+        // Custom behavior only for stone tiles
+    }
+}
+```
+
+---
+
+## Key hooks
+
+### `SetStaticDefaults`
+
+Called once during mod loading. Use this to modify tile data that is set up at load time, such as `TileObjectData` for multi-tiles.
+
+```csharp
+public override void SetStaticDefaults()
+{
+    // Allow Sunflowers to be placed on your custom block type
+    TileObjectData data = TileObjectData.GetTileData(TileID.Sunflower, 0);
+    data.AnchorValidTiles = data.AnchorValidTiles.Append(ModContent.TileType<MyBlock>()).ToArray();
+}
+
+public override void Unload()
+{
+    // Undo the change when the mod unloads — TileObjectData is not reset automatically
+    TileObjectData data = TileObjectData.GetTileData(TileID.Sunflower, 0);
+    data.AnchorValidTiles = data.AnchorValidTiles.Except(new[] { ModContent.TileType<MyBlock>() }).ToArray();
+}
+```
+
+<Warning>
+  Changes made to `TileObjectData` in `SetStaticDefaults` are not automatically reverted when a mod unloads. Always undo them in `Unload` to prevent issues when the mod is disabled.
+</Warning>
+
+### `KillTile`
+
+Runs when any tile is hit with a pickaxe or otherwise broken. Use the `ref` parameters to prevent breaking (`fail = true`), suppress drops (`noItem = true`), or show only dust (`effectOnly = true`).
+
+```csharp
+public override void KillTile(int i, int j, int type, ref bool fail, ref bool effectOnly, ref bool noItem)
+{
+    if (type == TileID.Diamond && !Main.hardMode)
+    {
+        // Prevent mining diamonds before Hardmode
+        fail = true;
+    }
+}
+```
+
+### `RightClick`
+
+Called when the player right-clicks any tile. Use a type check to target specific tiles.
+
+```csharp
+public override void RightClick(int i, int j, int type)
+{
+    if (type == TileID.Tombstones)
+    {
+        // Show a custom message when right-clicking tombstones
+        Main.NewText("Rest in peace...");
+    }
+}
+```
+
+### `NearbyEffects`
+
+Called each tick for tiles near the player. `closer` is `true` when the player is within a closer radius. Useful for passive area effects like light sources or buffs.
+
+```csharp
+public override void NearbyEffects(int i, int j, int type, bool closer)
+{
+    if (type == TileID.Sunflower && closer)
+    {
+        // Heal the player 1 HP every 5 seconds when near a sunflower
+        if (Main.GameUpdateCount % 300 == 0)
+            Main.LocalPlayer.statLife = Math.Min(Main.LocalPlayer.statLife + 1, Main.LocalPlayer.statLifeMax2);
+    }
+}
+```
+
+### `CanDrop` / `Drop`
+
+`CanDrop` lets you prevent a tile from dropping its items. `Drop` lets you spawn additional items when a tile is mined.
+
+```csharp
+// Prevent stone from dropping items when broken underground
+public override bool CanDrop(int i, int j, int type)
+{
+    if (type == TileID.Stone && j > Main.worldSurface)
+        return false;
+
+    return true;
+}
+
+// Spawn a bonus item alongside the normal drop
+public override void Drop(int i, int j, int type)
+{
+    if (type == TileID.Meteorite)
+    {
+        Item.NewItem(new EntitySource_TileBreak(i, j), i * 16, j * 16, 16, 16,
+            ModContent.ItemType<MySpecialShard>());
+    }
+}
+```
+
+### `ShakeTree` / `PreShakeTree`
+
+`ShakeTree` determines the **primary** drop when a tree is shaken. Return `true` to claim the drop and prevent other mods (and vanilla) from also trying to drop something. `PreShakeTree` is for **bonus** drops that do not replace the primary.
+
+```csharp
+public override bool ShakeTree(int x, int y, TreeTypes treeType)
+{
+    // Normal forest trees have a 5% chance to drop an example item
+    if (treeType == TreeTypes.Forest && WorldGen.genRand.NextBool(20))
+    {
+        Item.NewItem(WorldGen.GetItemSource_FromTreeShake(x, y),
+            x * 16, y * 16, 16, 16, ModContent.ItemType<ExampleItem>());
+        return true; // Prevent other drops from triggering
+    }
+
+    return false;
+}
+
+public override void PreShakeTree(int x, int y, TreeTypes treeType)
+{
+    // Bonus drops always run — they do not block the primary drop
+    if (treeType == TreeTypes.Forest && WorldGen.genRand.NextBool(10))
+        Item.NewItem(WorldGen.GetItemSource_FromTreeShake(x, y),
+            x * 16, y * 16, 16, 16, ItemID.Acorn, 3);
+}
+```
+
+---
+
+## Example: modifying tile placement and tree shaking
+
+The following examples from ExampleMod show the two most common `GlobalTile` patterns.
+
+### Modifying tile placement data
+
+`SunflowerChanges` uses `SetStaticDefaults` to allow the vanilla Sunflower tile to be placed on a custom block, and `Unload` to undo the change safely:
+
+```csharp
+public class SunflowerChanges : GlobalTile
+{
+    public override void SetStaticDefaults()
+    {
+        TileObjectData data = TileObjectData.GetTileData(TileID.Sunflower, 0);
+        data.AnchorValidTiles = data.AnchorValidTiles
+            .Append(ModContent.TileType<ExampleBlock>()).ToArray();
+    }
+
+    public override void Unload()
+    {
+        TileObjectData data = TileObjectData.GetTileData(TileID.Sunflower, 0);
+        data.AnchorValidTiles = data.AnchorValidTiles
+            .Except(new[] { ModContent.TileType<ExampleBlock>() }).ToArray();
+    }
+}
+```
+
+### Custom tree-shake drops
+
+`GlobalShakeTrees` customizes drops for different tree types. It uses both `ShakeTree` for primary drops and `PreShakeTree` for bonus drops:
+
+```csharp
+public class GlobalShakeTrees : GlobalTile
+{
+    public override bool ShakeTree(int x, int y, TreeTypes treeType)
+    {
+        if (treeType == TreeTypes.Forest && WorldGen.genRand.NextBool(20))
+        {
+            Item.NewItem(WorldGen.GetItemSource_FromTreeShake(x, y),
+                x * 16, y * 16, 16, 16, ModContent.ItemType<ExampleItem>());
+            return true;
+        }
+
+        if (treeType == TreeTypes.Snow && WorldGen.genRand.NextBool(20))
+        {
+            Projectile.NewProjectile(
+                new EntitySource_ShakeTree(x, y),
+                x * 16, y * 16,
+                Main.rand.Next(-16, 16), 0f,
+                ModContent.ProjectileType<ExamplePaperAirplaneProjectile>(),
+                Damage: 4, KnockBack: 1f, Owner: Main.myPlayer);
+            return true;
+        }
+
+        return false;
+    }
+
+    public override void PreShakeTree(int x, int y, TreeTypes treeType)
+    {
+        // Prevent acorns from dropping from forest trees at night
+        if (treeType == TreeTypes.Forest && !Main.dayTime)
+            NPCLoader.blockLoot.Add(ItemID.Acorn);
+    }
+}
+```
+
+<Tip>
+  The full sources are at `ExampleMod/Common/GlobalTiles/SunflowerChanges.cs` and `ExampleMod/Common/GlobalTiles/ShakeTrees.cs`.
+</Tip>

@@ -1,0 +1,241 @@
+---
+title: "ModBuff"
+description: "Creating custom status effects — buffs and debuffs — that apply to players and NPCs."
+---
+
+A `ModBuff` defines a new status effect in your mod. Buffs can grant bonuses, penalties, or special behaviors to players and NPCs while active. Terraria treats debuffs and buffs the same way internally — the distinction is set in `SetStaticDefaults`.
+
+## Creating a buff
+
+Create a class that extends `ModBuff`. tModLoader autoloads it at startup.
+
+```csharp
+using Terraria;
+using Terraria.ModLoader;
+
+namespace MyMod.Content.Buffs
+{
+    public class MyBuff : ModBuff
+    {
+        public override void SetStaticDefaults()
+        {
+            // Mark this as a debuff (shown with red border, can be cleansed)
+            Main.debuff[Type] = true;
+
+            // Hide the countdown timer on the buff icon
+            // Main.buffNoTimeDisplay[Type] = true;
+
+            // Allow the buff to be applied in PvP
+            // Main.pvpBuff[Type] = true;
+        }
+
+        public override void Update(Player player, ref int buffIndex)
+        {
+            // Applied every tick the player has this buff
+            player.statDefense -= 5;
+        }
+    }
+}
+```
+
+### Texture
+
+Place a 32×32 PNG at the same path as your class file (e.g., `Content/Buffs/MyBuff.png`). tModLoader resolves the texture automatically by convention.
+
+### Display name and tooltip
+
+Buffs use tModLoader's localization system. Add entries to your `Localization/*.hjson` file:
+
+```hjson
+Mods.MyMod.Buffs.MyBuff.DisplayName: My Buff
+Mods.MyMod.Buffs.MyBuff.Description: Reduces defense by 5
+```
+
+If you need to inject values into the description at runtime (e.g., the exact penalty amount), override `Description`:
+
+```csharp
+public static readonly int DefenseBonus = 10;
+
+public override LocalizedText Description => base.Description.WithFormatArgs(DefenseBonus);
+```
+
+Then reference the placeholder in the hjson file:
+
+```hjson
+Mods.MyMod.Buffs.ExampleDefenseBuff.Description: Increases defense by {0}
+```
+
+## Applying a buff
+
+Call `Player.AddBuff` anywhere you have a player reference, passing the buff's type ID and a duration in ticks (60 ticks = 1 second):
+
+```csharp
+// Apply for 5 seconds
+player.AddBuff(ModContent.BuffType<MyBuff>(), 5 * 60);
+```
+
+To apply a buff to an NPC:
+
+```csharp
+npc.AddBuff(ModContent.BuffType<MyDebuff>(), 5 * 60);
+```
+
+## Key hooks
+
+### `SetStaticDefaults()`
+
+Configure the buff's global flags after loading. This is the only place to set `Main.*` arrays for your buff type.
+
+| Flag | Effect |
+|---|---|
+| `Main.debuff[Type] = true` | Marks as a debuff; cleansable by Nurse, shown with red border |
+| `Main.buffNoTimeDisplay[Type] = true` | Hides the time remaining counter on the icon |
+| `Main.pvpBuff[Type] = true` | Buff can be applied to other players in PvP |
+| `Main.vanityPet[Type] = true` | Used for vanity pets |
+| `Main.lightPet[Type] = true` | Used for light pets |
+
+### `Update(Player player, ref int buffIndex)`
+
+Called every game tick while the player has this buff. Apply stat changes, trigger effects, or remove the buff early:
+
+```csharp
+public override void Update(Player player, ref int buffIndex)
+{
+    player.statDefense += 10; // Grant defense bonus each tick
+
+    // To remove the buff early:
+    // player.DelBuff(buffIndex);
+    // buffIndex--;
+}
+```
+
+<Warning>
+  If you call `player.DelBuff(buffIndex)` to remove the buff early, you must also decrement `buffIndex` by 1 immediately after. Failing to do so will cause the game to skip processing the next buff in the array.
+</Warning>
+
+### `Update(NPC npc, ref int buffIndex)`
+
+Same as the player variant, but called on NPCs. Use `npc.GetGlobalNPC<T>()` to access mod-specific NPC data:
+
+```csharp
+public override void Update(NPC npc, ref int buffIndex)
+{
+    npc.GravityMultiplier *= 0.5f; // Halve the NPC's gravity while debuffed
+}
+```
+
+### `ReApply(Player player, int time, int buffIndex)`
+
+Called when a buff is added to a player who already has it. By default, Terraria extends the duration if the new time is longer. Return `true` to fully suppress vanilla re-apply logic:
+
+```csharp
+public override bool ReApply(Player player, int time, int buffIndex)
+{
+    // Always reset to a fixed duration instead of extending
+    player.buffTime[buffIndex] = 300;
+    return true;
+}
+```
+
+### `ModifyBuffText(ref string buffName, ref string tip, ref int rare)`
+
+Modify the tooltip text or name color shown when hovering over the buff icon:
+
+```csharp
+public override void ModifyBuffText(ref string buffName, ref string tip, ref int rare)
+{
+    tip = $"Defense -{DefensePenalty} (currently active)";
+    rare = ItemRarityID.Orange; // Changes the name color
+}
+```
+
+### `PreDraw` / `PostDraw`
+
+Override these to customize how the buff icon is rendered. Return `false` from `PreDraw` to skip the default drawing entirely:
+
+```csharp
+public override bool PreDraw(SpriteBatch spriteBatch, int buffIndex, ref BuffDrawParams drawParams)
+{
+    drawParams.DrawColor = Color.Red; // Tint the icon red
+    return true; // Still draw the default icon
+}
+```
+
+### `RightClick(int buffIndex)`
+
+Return `false` to prevent the player from canceling the buff by right-clicking its icon:
+
+```csharp
+public override bool RightClick(int buffIndex)
+{
+    return false; // Buff cannot be manually removed
+}
+```
+
+## Example: `ExampleDefenseBuff`
+
+This buff from ExampleMod grants a flat defense bonus while active:
+
+```csharp
+using Terraria;
+using Terraria.Localization;
+using Terraria.ModLoader;
+
+namespace ExampleMod.Content.Buffs
+{
+    public class ExampleDefenseBuff : ModBuff
+    {
+        public static readonly int DefenseBonus = 10;
+
+        public override LocalizedText Description => base.Description.WithFormatArgs(DefenseBonus);
+
+        public override void Update(Player player, ref int buffIndex)
+        {
+            player.statDefense += DefenseBonus; // Grant a +10 defense boost to the player while the buff is active.
+        }
+    }
+}
+```
+
+## Example: `ExampleDefenseDebuff`
+
+This debuff from ExampleMod reduces both player and NPC defense by 25%, and works in PvP:
+
+```csharp
+using ExampleMod.Common.GlobalNPCs;
+using ExampleMod.Common.Players;
+using Terraria;
+using Terraria.ModLoader;
+
+namespace ExampleMod.Content.Buffs
+{
+    public class ExampleDefenseDebuff : ModBuff
+    {
+        public const int DefenseReductionPercent = 25;
+        public static float DefenseMultiplier = 1 - DefenseReductionPercent / 100f;
+
+        public override void SetStaticDefaults()
+        {
+            Main.pvpBuff[Type] = true; // This buff can be applied by other players in PvP.
+
+            // NPCs immune to Ichor will automatically be immune to this buff.
+            BuffImmuneGlobalNPC.SetDefenseDebuffStaticDefaults(Type);
+        }
+
+        public override void Update(NPC npc, ref int buffIndex)
+        {
+            npc.GetGlobalNPC<DamageModificationGlobalNPC>().exampleDefenseDebuff = true;
+        }
+
+        public override void Update(Player player, ref int buffIndex)
+        {
+            player.GetModPlayer<ExampleDamageModificationPlayer>().exampleDefenseDebuff = true;
+            player.statDefense *= DefenseMultiplier;
+        }
+    }
+}
+```
+
+<Note>
+  Using a buff to track effects on both players and NPCs (as in `ExampleDefenseDebuff`) has a key advantage: vanilla automatically syncs `AddBuff` calls in multiplayer, so you typically don't need to write custom netcode for buff application.
+</Note>
